@@ -145,3 +145,31 @@ def test_scan_does_not_delete_and_reports_partial(monkeypatch, tmp_path):
     assert "Python cache" in result.output
     assert "Partial" in result.output
     assert "No files were deleted" in result.output
+
+
+def test_health_json_is_structured_and_does_not_scan(monkeypatch):
+    import json
+
+    monkeypatch.setattr(
+        cli,
+        "get_system_stats",
+        lambda: SystemStats(
+            "Darwin",
+            90,
+            1,
+            10,
+            10,
+            1,
+            10,
+            10,
+            100,
+        ),
+    )
+
+    def no_scan():
+        raise AssertionError("Health must not scan storage")
+
+    monkeypatch.setattr(cli, "scan_cleanup", no_scan)
+    result = runner.invoke(cli.app, ["health", "--json"])
+    assert result.exit_code == 0
+    assert json.loads(result.output)["issues"][0]["id"] == "cpu_high"

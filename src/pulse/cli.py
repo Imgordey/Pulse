@@ -1,3 +1,5 @@
+import json
+from dataclasses import asdict
 from enum import StrEnum
 
 import psutil
@@ -10,6 +12,8 @@ from pulse.cleanup.scanner import scan_cleanup
 from pulse.core.diagnostics import assess_system
 from pulse.core.processes import get_process_stats
 from pulse.core.system import get_system_stats
+from pulse.health.engine import analyze_health
+from pulse.optimization.engine import recommend_maintenance
 
 app = typer.Typer(
     name="pulse",
@@ -60,7 +64,13 @@ def status() -> None:
     table = Table(title="PULSE · System status")
     table.add_column("Metric", style="cyan")
     table.add_column("Value")
-    table.add_row("OS", Text(stats.os))
+    table.add_row("OS", Text(f"{stats.os} {stats.os_version}".strip()))
+    table.add_row("Architecture", stats.architecture or "Unavailable")
+    table.add_row(
+        "CPU cores", f"{stats.logical_cpus or '?'} logical / {stats.physical_cpus or '?'} physical"
+    )
+    if stats.load_average is not None:
+        table.add_row("Load (1 / 5 / 15 min)", " / ".join(f"{x:.2f}" for x in stats.load_average))
     table.add_row("CPU", f"{stats.cpu_percent:.1f}%")
     table.add_row(
         "Memory",
@@ -71,13 +81,21 @@ def status() -> None:
         f"{_gib(stats.disk_used)} / {_gib(stats.disk_total)} ({stats.disk_percent:.1f}%)",
     )
     table.add_row("Available memory", _gib(stats.memory_available))
-    table.add_row("Free disk space", _gib(stats.disk_free))
+    table.add_row(
+        "Free disk space", "Unavailable" if stats.disk_free is None else _gib(stats.disk_free)
+    )
     table.add_row("Swap", f"{_gib(stats.swap_used)} / {_gib(stats.swap_total)}")
     if stats.battery is None:
         table.add_row("Battery", "Unavailable")
     else:
         power = "connected to power" if stats.battery.plugged_in else "on battery"
         table.add_row("Battery", f"{stats.battery.percent:.0f}% · {power}")
+    if stats.network is not None:
+        table.add_row(
+            "Network totals",
+            f"Sent {_size(stats.network.bytes_sent)} / "
+            f"received {_size(stats.network.bytes_received)}",
+        )
     table.add_row("Uptime", _uptime(stats.uptime))
     console.print(table)
 
@@ -158,6 +176,43 @@ def scan() -> None:
     console.print(
         "Review required. No files were deleted. Sizes are not guaranteed reclaimable space."
     )
+
+
+@app.command()
+def health(json_output: bool = typer.Option(False, "--json")) -> None:
+    """Explain current resource observations without a storage scan."""
+    try:
+        report = analyze_health(get_system_stats())
+    except (OSError, psutil.Error) as exc:
+        console.print(f"Unable to read system metrics: {exc}", markup=False)
+        raise typer.Exit(code=1) from exc
+    if json_output:
+        typer.echo(json.dumps(asdict(report), ensure_ascii=False))
+        return
+    console.print(f"PULSE · {report.status}")
+    for issue in report.issues:
+        console.print(f"{issue.severity}: {issue.title}", markup=False)
+        console.print(issue.description, markup=False)
+        console.print(f"Next: {issue.recommendation}", markup=False)
+    for limitation in report.limitations:
+        console.print(limitation, markup=False)
+
+
+@app.command()
+def optimize() -> None:
+    """Recommend legitimate maintenance; never changes settings or stops apps."""
+    try:
+        report = analyze_health(get_system_stats(), get_process_stats())
+    except (OSError, psutil.Error) as exc:
+        console.print(f"Unable to read system metrics: {exc}", markup=False)
+        raise typer.Exit(code=1) from exc
+    recommendations = recommend_maintenance(report)
+    if not recommendations:
+        console.print("No maintenance recommendation from this sample.")
+    for item in recommendations:
+        console.print(item.title, markup=False)
+        console.print(item.action, markup=False)
+    console.print("Recommendations only. No changes made.")
 
 
 if __name__ == "__main__":

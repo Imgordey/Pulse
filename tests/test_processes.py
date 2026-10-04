@@ -10,6 +10,7 @@ from pulse.core import processes
 def test_samples_twice_and_skips_inaccessible_or_exited(monkeypatch):
     good = Mock(pid=12)
     good.name.return_value = "worker"
+    good.username.return_value = "test-user"
     good.cpu_percent.side_effect = [0, 150.0]
     good.memory_info.return_value = SimpleNamespace(rss=1024)
     denied = Mock(pid=13)
@@ -22,7 +23,7 @@ def test_samples_twice_and_skips_inaccessible_or_exited(monkeypatch):
     sleep = Mock()
     monkeypatch.setattr(processes.time, "sleep", sleep)
     result = processes.get_process_stats()
-    assert result.processes == (processes.ProcessStats(12, "worker", 150.0, 1024),)
+    assert result.processes == (processes.ProcessStats(12, "worker", 150.0, 1024, "test-user"),)
     assert result.skipped == 3
     assert good.cpu_percent.call_count == 2
     sleep.assert_called_once_with(0.5)

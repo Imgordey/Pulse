@@ -70,3 +70,20 @@ counted once per location. Missing/inaccessible roots are omitted, so this is
 not a full disk scan. Filesystem changes during scanning can affect results.
 
 Cleanup execution and desktop UI are not implemented yet.
+
+## Health and maintenance APIs
+
+`pulse health` (or `pulse health --json`) performs a quick, deterministic analysis
+without scanning storage. `pulse optimize` additionally samples processes and
+returns manual recommendations; it never stops apps or changes settings.
+
+Rules: CPU ≥85% is a snapshot warning; memory ≥85% and swap ≥2 GiB are informational
+observations, not proof of pressure. Available system-disk space ≤10% warns and
+≤5% is critical. Battery charge ≤10% warns only while unplugged. Process CPU ≥100%
+or RSS ≥25% of installed RAM prompts review, not automatic termination. Overall
+status is the maximum warning/critical severity, not a numerical score. “No alerts”
+only describes the measured sample. Network rates can be calculated from two
+monotonic-time counter samples and are unknown when counters reset.
+
+Import `pulse.services.monitor.collect_snapshot`, `pulse.health.engine.analyze_health`,
+and `pulse.optimization.engine.recommend_maintenance` for structured Python APIs.

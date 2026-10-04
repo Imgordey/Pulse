@@ -1,8 +1,11 @@
 import platform
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import psutil
+
+from pulse.core.network import NetworkTotals, get_network_totals
 
 
 @dataclass(frozen=True)
@@ -24,10 +27,23 @@ class SystemStats:
     disk_percent: float
     uptime: int
     memory_available: int = 0
-    disk_free: int = 0
+    disk_free: int | None = None
     swap_used: int = 0
     swap_total: int = 0
     battery: BatteryStats | None = None
+    os_version: str = ""
+    architecture: str = ""
+    logical_cpus: int | None = None
+    physical_cpus: int | None = None
+    load_average: tuple[float, float, float] | None = None
+    network: NetworkTotals | None = None
+
+
+def _optional[T](collect: Callable[[], T]) -> T | None:
+    try:
+        return collect()
+    except (OSError, psutil.Error, NotImplementedError):
+        return None
 
 
 def get_system_stats() -> SystemStats:
@@ -63,4 +79,10 @@ def get_system_stats() -> SystemStats:
         swap_used=swap.used,
         swap_total=swap.total,
         battery=battery,
+        os_version=platform.mac_ver()[0] if platform.system() == "Darwin" else platform.release(),
+        architecture=platform.machine(),
+        logical_cpus=_optional(lambda: psutil.cpu_count(logical=True)),
+        physical_cpus=_optional(lambda: psutil.cpu_count(logical=False)),
+        load_average=_optional(psutil.getloadavg),
+        network=get_network_totals(),
     )

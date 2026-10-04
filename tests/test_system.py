@@ -6,6 +6,11 @@ from pulse.core import system
 
 def test_collects_system_metrics(monkeypatch):
     monkeypatch.setattr(system.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(system.platform, "mac_ver", lambda: ("15.0", (), ""))
+    monkeypatch.setattr(system.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(system.psutil, "cpu_count", lambda logical: 8 if logical else 4)
+    monkeypatch.setattr(system.psutil, "getloadavg", lambda: (1.0, 2.0, 3.0))
+    monkeypatch.setattr(system, "get_network_totals", lambda: None)
     monkeypatch.setattr(system.time, "time", lambda: 10000)
     monkeypatch.setattr(system.psutil, "boot_time", lambda: 1000)
     cpu = Mock(return_value=12.5)
@@ -44,6 +49,11 @@ def test_collects_system_metrics(monkeypatch):
         swap_used=10,
         swap_total=50,
         battery=system.BatteryStats(80.0, False, 3600),
+        os_version="15.0",
+        architecture="arm64",
+        logical_cpus=8,
+        physical_cpus=4,
+        load_average=(1.0, 2.0, 3.0),
     )
     cpu.assert_called_once_with(interval=0.5)
     disk.assert_called_once_with("/")
