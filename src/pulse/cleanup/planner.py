@@ -26,16 +26,22 @@ def identity(info: os.stat_result) -> FileIdentity:
     )
 
 
-def classify_file(relative: Path, info: os.stat_result, now: float) -> tuple[Safety, str]:
-    if not valid_relative(relative) or not stat.S_ISREG(info.st_mode):
-        return Safety.protected, "Not a regular cache file"
+def known_cache_path(relative: Path) -> bool:
+    if not valid_relative(relative):
+        return False
     parts = relative.parts
     name = parts[-1].removesuffix(".body")
-    known = (
+    return (
         len(parts) == 6
         and re.fullmatch(r"[0-9a-f]{56}", name) is not None
         and tuple(name[:5]) == parts[:5]
     )
+
+
+def classify_file(relative: Path, info: os.stat_result, now: float) -> tuple[Safety, str]:
+    if not valid_relative(relative) or not stat.S_ISREG(info.st_mode):
+        return Safety.protected, "Not a regular cache file"
+    known = known_cache_path(relative)
     if not known:
         return Safety.protected, "Unrecognized pip HTTP cache layout"
     if info.st_nlink != 1 or info.st_uid != os.getuid():

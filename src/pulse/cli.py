@@ -17,6 +17,7 @@ from pulse.core.processes import get_process_stats
 from pulse.core.system import get_system_stats
 from pulse.health.engine import analyze_health
 from pulse.optimization.engine import recommend_maintenance
+from pulse.presentation.maintenance import history_command, recover_command
 
 app = typer.Typer(
     name="pulse",
@@ -24,6 +25,8 @@ app = typer.Typer(
     no_args_is_help=False,
 )
 console = Console()
+app.command("history")(history_command)
+app.command("recover")(recover_command)
 
 
 @app.callback(invoke_without_command=True)
@@ -304,7 +307,15 @@ def clean(
     )
     if dry_run:
         console.print("Dry run. No filesystem changes made.")
-    if any(result.status in ("failed", "skipped") for result in report.results):
+    if report.journal_path is not None:
+        console.print(f"Journal: {report.journal_path}", markup=False)
+    if report.audit_error:
+        console.print(f"Audit error: {report.audit_error}", markup=False)
+    if (
+        report.audit_error
+        or report.blocked_reason
+        or any(result.status in ("failed", "skipped") for result in report.results)
+    ):
         raise typer.Exit(code=1)
 
 

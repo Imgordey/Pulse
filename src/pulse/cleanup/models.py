@@ -92,3 +92,5 @@ class CleanupReport:
     bytes_removed: int
     bytes_reclaimed: int | None
     blocked_reason: str | None = None
+    journal_path: Path | None = None
+    audit_error: str | None = None

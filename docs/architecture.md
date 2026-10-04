@@ -10,6 +10,7 @@ The CLI is a replaceable presentation layer; no GUI framework is selected.
 | Scan | `cleanup/scanner` | Bounded, descriptor-based inventories; no writes |
 | Classify / plan | `cleanup/planner`, `cleanup/models` | Narrow allowlist, file identities, age, scope and completeness |
 | Execute | `cleanup/executor`, `cleanup/filesystem` | Explicit confirmation, revalidation, staging, unlink and per-file results |
+| Audit / recover | `cleanup/journal`, `cleanup/recovery` | Local write-ahead records and explicit recovery without overwrite |
 | Recommend | `optimization/engine` | Real maintenance recommendations, no system mutations |
 | Coordinate | `services/monitor`, `services/engine` | Snapshots and explicit full scans reusable by a desktop UI |
 | Present | `cli` | Tables, formatting, progress, JSON output and user confirmation |
@@ -37,5 +38,12 @@ fundamental metric collection failures are surfaced to the caller.
 
 Known limits: snapshot thresholds do not establish sustained problems; battery
 condition and macOS Memory Pressure are not measured; cleanup execution currently
-supports pip HTTP cache only; there is no persistent journal, automatic recovery,
+supports pip HTTP cache only; recovery is explicit rather than automatic; there is no
 startup-item controller or claimed APFS reclaimed-space measurement.
+
+Cleanup journals are append-only per run and synced before mutations. They are
+local data, not trusted instructions. History parsing is bounded and preserves
+recovery hints from valid records preceding a malformed tail. Plans are always
+built and validated against the live filesystem rather than executed from logs.
+A final audit-write error does not erase or misreport already-completed deletion
+or recovery; the report includes the audit error and subsequent operations stop.

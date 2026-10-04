@@ -34,6 +34,9 @@ ruff format --check .
 | `pulse clean --dry-run` | Plan and validate eligible pip cache files without filesystem writes |
 | `pulse clean --dry-run --json` | Structured plan and execution preview |
 | `pulse clean --category pip-http` | Display plan, ask confirmation (default NO), execute and report |
+| `pulse history` / `pulse history --json` | Read private cleanup audit journals and potential recovery paths |
+| `pulse recover SOURCE --to ORIGINAL --dry-run` | Preview recovery of a preserved cache file |
+| `pulse recover SOURCE --to ORIGINAL` | Restore with confirmation, without overwriting existing data |
 | `pulse optimize` | Manual maintenance recommendations; no automatic changes |
 
 Use `--details` on `clean` to show every planned file and individual result.
@@ -110,8 +113,19 @@ files. Successful cache deletion is permanent, not a Trash operation.
 Reports distinguish deleted/skipped/failed/would-delete, logical bytes removed,
 blocked-plan reasons and recovery paths. Actual reclaimed space remains unknown
 on APFS because shared extents, snapshots and other activity prevent attribution.
-Callers can persist the structured report for their own audit trail; the CLI
-prints results but does not maintain an on-disk cleanup journal yet. Descriptor
+Actual cleanup now writes a private journal in
+`~/Library/Application Support/Pulse/cleanup-history` (files mode 600). Intent
+records are flushed and synced before staging; staged records precede unlink.
+If the journal is unavailable, cleanup is refused. If auditing fails during a
+run, remaining operations stop and actual completed results are retained.
+Dry-run creates no journals or directories. History is local and never uploaded.
+Interrupted/malformed journals report errors while retaining prior recovery hints.
+Use `history` to review these hints; records are data, never executable plans.
+Recovery is explicit and restricted to matching pip cache staging paths. The
+source is revalidated and an exclusive hardlink prevents destination overwrite.
+Changed files, symlinks, different owners and conflicting destinations are refused.
+A successfully deleted file cannot be recovered; recovery only handles files
+preserved after errors. There is no automatic purge or history pruning. Descriptor
 checks reduce races; they do not promise protection against a hostile process
 running as the same user or an active writer with an already-open file handle.
 
@@ -129,7 +143,9 @@ See [architecture](docs/architecture.md) for the stage boundaries.
 - `pulse.health.engine.analyze_health(stats, processes=None)` → issues and status
 - `pulse.cleanup.scanner.scan_storage()` → candidates and access problems
 - `pulse.cleanup.planner.create_cleanup_plan()` → eligible file plan
-- `pulse.cleanup.executor.execute_cleanup(plan, dry_run=True)` → explicit results
+- `pulse.cleanup.executor.execute_cleanup(plan, dry_run=True)` → explicit results and audit location
+- `pulse.cleanup.journal.read_history()` → bounded audit summaries and recovery hints
+- `pulse.cleanup.recovery.prepare_recovery()` / `recover_file()` → reviewed, explicit recovery
 - `pulse.optimization.engine.recommend_maintenance(report, candidates=())` → recommendations
 - `pulse.services.monitor.collect_snapshot()` → quick monitor snapshot
 - `pulse.services.engine.scan_computer()` → explicit full scan and recommendations

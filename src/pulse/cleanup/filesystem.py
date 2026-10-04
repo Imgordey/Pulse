@@ -41,3 +41,17 @@ def open_relative_directory(root_fd: int, relative: Path) -> Iterator[int]:
         yield descriptor
     finally:
         os.close(descriptor)
+
+
+def validate_owned_directory_chain(home: Path, parent: Path) -> None:
+    relative = parent.relative_to(home)
+    current = home
+    for component in (None, *relative.parts):
+        if component is not None:
+            current /= component
+        with open_directory(current) as fd:
+            info = os.fstat(fd)
+            if info.st_uid != os.getuid() or info.st_mode & 0o022:
+                raise PermissionError(
+                    "Cache directories must be owned by you and not shared-writable"
+                )
