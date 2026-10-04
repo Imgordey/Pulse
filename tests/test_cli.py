@@ -121,24 +121,29 @@ def test_process_failure(monkeypatch):
 
 
 def test_scan_does_not_delete_and_reports_partial(monkeypatch, tmp_path):
-    from pulse.cleanup.scanner import CleanupCandidate
+    from pulse.cleanup.models import CleanupCandidate, StorageScan
 
     monkeypatch.setattr(
         cli,
-        "scan_cleanup",
-        lambda: [
-            CleanupCandidate(
-                tmp_path,
-                "developer",
-                1024**3,
-                "Python cache",
-                "review_required",
-                False,
-                "Review first",
-                False,
-                1,
-            )
-        ],
+        "scan_storage",
+        lambda: StorageScan(
+            tuple(
+                [
+                    CleanupCandidate(
+                        tmp_path,
+                        "developer",
+                        1024**3,
+                        "Python cache",
+                        "review_required",
+                        False,
+                        "Review first",
+                        False,
+                        1,
+                    )
+                ]
+            ),
+            (),
+        ),
     )
     result = runner.invoke(cli.app, ["scan"])
     assert result.exit_code == 0
@@ -169,7 +174,73 @@ def test_health_json_is_structured_and_does_not_scan(monkeypatch):
     def no_scan():
         raise AssertionError("Health must not scan storage")
 
-    monkeypatch.setattr(cli, "scan_cleanup", no_scan)
+    monkeypatch.setattr(cli, "scan_storage", no_scan)
     result = runner.invoke(cli.app, ["health", "--json"])
     assert result.exit_code == 0
     assert json.loads(result.output)["issues"][0]["id"] == "cpu_high"
+
+
+def test_clean_confirmation_defaults_to_no(cache_file, monkeypatch):
+    from pulse.cleanup.planner import create_cleanup_plan
+
+    home, file = cache_file
+    monkeypatch.setattr(cli, "create_cleanup_plan", lambda: create_cleanup_plan(home))
+    monkeypatch.setattr(
+        cli,
+        "execute_cleanup",
+        lambda *_, **__: (_ for _ in ()).throw(
+            AssertionError("Cancelled cleanup must not execute")
+        ),
+    )
+    result = runner.invoke(cli.app, ["clean", "--category", "pip-http"], input="\n")
+    assert result.exit_code == 0
+    assert "Cancelled" in result.output
+    assert file.exists()
+
+
+def test_clean_dry_run_and_explicit_test_data_cleanup(cache_file, monkeypatch):
+    from pulse.cleanup.executor import execute_cleanup
+    from pulse.cleanup.planner import create_cleanup_plan
+
+    home, file = cache_file
+    monkeypatch.setattr(cli, "create_cleanup_plan", lambda: create_cleanup_plan(home))
+    monkeypatch.setattr(
+        cli, "execute_cleanup", lambda plan, **kwargs: execute_cleanup(plan, home=home, **kwargs)
+    )
+    dry = runner.invoke(cli.app, ["clean", "--dry-run"])
+    assert dry.exit_code == 0
+    assert "Dry run" in dry.output
+    assert file.exists()
+    actual = runner.invoke(cli.app, ["clean", "--category", "pip-http"], input="y\n")
+    assert actual.exit_code == 0
+    assert "deleted" in actual.output
+    assert not file.exists()
+
+
+def test_clean_requires_category(cache_file, monkeypatch):
+    from pulse.cleanup.planner import create_cleanup_plan
+
+    home, file = cache_file
+    monkeypatch.setattr(cli, "create_cleanup_plan", lambda: create_cleanup_plan(home))
+    result = runner.invoke(cli.app, ["clean"], input="y\n")
+    assert result.exit_code == 2
+    assert file.exists()
+
+
+def test_clean_json_dry_run_contains_plan_and_report(cache_file, monkeypatch):
+    import json
+
+    from pulse.cleanup.executor import execute_cleanup
+    from pulse.cleanup.planner import create_cleanup_plan
+
+    home, file = cache_file
+    monkeypatch.setattr(cli, "create_cleanup_plan", lambda: create_cleanup_plan(home))
+    monkeypatch.setattr(
+        cli, "execute_cleanup", lambda plan, **kwargs: execute_cleanup(plan, home=home, **kwargs)
+    )
+    result = runner.invoke(cli.app, ["clean", "--dry-run", "--json"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["plan"]["files"][0]["safety"] == "safe"
+    assert payload["report"]["dry_run"]
+    assert file.exists()

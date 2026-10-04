@@ -1,6 +1,7 @@
 import json
 from dataclasses import asdict
 from enum import StrEnum
+from typing import Annotated
 
 import psutil
 import typer
@@ -8,7 +9,9 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from pulse.cleanup.scanner import scan_cleanup
+from pulse.cleanup.executor import execute_cleanup
+from pulse.cleanup.planner import create_cleanup_plan
+from pulse.cleanup.scanner import scan_storage
 from pulse.core.diagnostics import assess_system
 from pulse.core.processes import get_process_stats
 from pulse.core.system import get_system_stats
@@ -136,6 +139,9 @@ def processes(
         console.print("No accessible processes found.")
     if snapshot.skipped:
         console.print(f"Skipped {snapshot.skipped} inaccessible or exited processes.")
+    if snapshot.error:
+        console.print(snapshot.error, markup=False)
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -157,22 +163,35 @@ def doctor() -> None:
 
 
 @app.command()
-def scan() -> None:
-    """Preview known developer caches. Never deletes files."""
-    candidates = scan_cleanup()
-    table = Table(title="PULSE · Cleanup preview (read-only)")
-    for column in ("Cache", "Size estimate", "Coverage", "Path"):
+def scan(
+    details: bool = typer.Option(False, "--details"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Preview known caches and diagnostic reports. Never deletes files."""
+    if json_output:
+        storage = scan_storage()
+        typer.echo(json.dumps(asdict(storage), default=str, ensure_ascii=False))
+        return
+    with console.status("Scanning known cache locations…"):
+        storage = scan_storage()
+    table = Table(title="PULSE · Storage preview (read-only)")
+    for column in ("Location", "Size estimate", "Safety", "Coverage"):
         table.add_column(column)
-    for candidate in candidates:
+    for candidate in storage.candidates:
         table.add_row(
             candidate.description,
             _size(candidate.size),
+            candidate.safety.value,
             "Complete" if candidate.complete else "Partial",
-            Text(str(candidate.path)),
         )
     console.print(table)
-    if not candidates:
+    if details:
+        for candidate in storage.candidates:
+            console.print(f"{candidate.category}: {candidate.path}", markup=False)
+    if not storage.candidates:
         console.print("No known cache directories were accessible. This is not a full disk scan.")
+    for problem in storage.problems:
+        console.print(f"Unavailable: {problem.path}: {problem.reason}", markup=False)
     console.print(
         "Review required. No files were deleted. Sizes are not guaranteed reclaimable space."
     )
@@ -213,6 +232,80 @@ def optimize() -> None:
         console.print(item.title, markup=False)
         console.print(item.action, markup=False)
     console.print("Recommendations only. No changes made.")
+
+
+class CleanupCategory(StrEnum):
+    pip_http = "pip-http"
+
+
+@app.command()
+def clean(
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    category: Annotated[CleanupCategory | None, typer.Option("--category")] = None,
+    details: bool = typer.Option(False, "--details"),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Review and explicitly remove old pip HTTP cache files. Defaults to NO."""
+    if json_output:
+        if not dry_run:
+            console.print("--json is supported only with --dry-run.")
+            raise typer.Exit(code=2)
+        plan = create_cleanup_plan()
+        report = execute_cleanup(plan, dry_run=True)
+        typer.echo(json.dumps({"plan": asdict(plan), "report": asdict(report)}, default=str))
+        if not plan.complete:
+            raise typer.Exit(code=1)
+        return
+    with console.status("Planning eligible cache cleanup…"):
+        plan = create_cleanup_plan()
+    console.print("PULSE · Cleanup plan")
+    console.print(f"Root: {plan.root}", markup=False)
+    console.print(
+        f"SAFE: {len(plan.files)} old download-cache files · estimate {_size(plan.estimated_bytes)}"
+    )
+    console.print(
+        f"Excluded: {plan.skipped}. Only recognized files unused for at least seven days qualify."
+    )
+    for warning in plan.warnings:
+        console.print(warning, markup=False)
+    if details:
+        for item in plan.files:
+            console.print(f"  {item.relative_path} · {_size(item.identity.size)}", markup=False)
+    else:
+        console.print("Use --details to display each file in this group.")
+    if not plan.complete:
+        console.print("Plan incomplete; cleanup refused.")
+        raise typer.Exit(code=1)
+    if not plan.files:
+        console.print("No eligible files. No changes made.")
+        return
+    if not dry_run:
+        if category is None:
+            console.print("Select --category pip-http explicitly, or use --dry-run.")
+            raise typer.Exit(code=2)
+        console.print(
+            "Removing these files requires future downloads. Close pip/package installers first."
+        )
+        if not typer.confirm("Permanently remove only these reviewed cache files?", default=False):
+            console.print("Cancelled. No changes made.")
+            return
+    report = execute_cleanup(plan, dry_run=dry_run, confirmed=not dry_run)
+    counts: dict[str, int] = {}
+    for result in report.results:
+        counts[result.status] = counts.get(result.status, 0) + 1
+        if details or result.status in ("failed", "skipped"):
+            console.print(f"{result.status}: {result.path} — {result.reason}", markup=False)
+        if result.recovery_path is not None:
+            console.print(f"Preserved file for recovery: {result.recovery_path}", markup=False)
+    console.print("Results: " + ", ".join(f"{state}={count}" for state, count in counts.items()))
+    console.print(f"Logical bytes removed: {_size(report.bytes_removed)}")
+    console.print(
+        "Actual reclaimed disk space is unknown on APFS; no speed improvement is promised."
+    )
+    if dry_run:
+        console.print("Dry run. No filesystem changes made.")
+    if any(result.status in ("failed", "skipped") for result in report.results):
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

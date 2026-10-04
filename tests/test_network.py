@@ -11,3 +11,12 @@ def test_counter_reset_and_invalid_clock_are_unknown() -> None:
     before = NetworkTotals(100, 200, 2)
     for after in (NetworkTotals(1, 2, 3), NetworkTotals(300, 600, 1)):
         assert network_activity(before, after).sent_per_second is None
+
+
+def test_network_permissions_return_unknown(monkeypatch) -> None:
+    from unittest.mock import Mock
+
+    from pulse.core import network
+
+    monkeypatch.setattr(network.psutil, "net_io_counters", Mock(side_effect=PermissionError()))
+    assert network.get_network_totals() is None

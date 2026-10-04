@@ -103,4 +103,6 @@ def analyze_health(stats: SystemStats, processes: ProcessSnapshot | None = None)
     ]
     if processes is not None and processes.skipped:
         limitations.append(f"{processes.skipped} processes were inaccessible or exited.")
+    if processes is not None and processes.error:
+        limitations.append(processes.error)
     return HealthReport(tuple(issues), status, tuple(limitations))

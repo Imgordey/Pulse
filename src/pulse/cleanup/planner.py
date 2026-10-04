@@ -6,7 +6,7 @@ import stat
 import time
 from pathlib import Path
 
-from pulse.cleanup.filesystem import open_directory, valid_relative
+from pulse.cleanup.filesystem import open_directory, open_relative_directory, valid_relative
 from pulse.cleanup.models import CleanupPlan, FileIdentity, PlannedFile, Safety
 
 PIP_ROOT = Path("Library/Caches/pip/http-v2")
@@ -61,12 +61,24 @@ def create_cleanup_plan(home: Path | None = None, max_entries: int = 50000) -> C
         with open_directory(root) as root_fd:
             root_info = os.fstat(root_fd)
             device, inode = root_info.st_dev, root_info.st_ino
+            if root_info.st_uid != os.getuid() or root_info.st_mode & 0o022:
+                return CleanupPlan(
+                    home,
+                    root,
+                    device,
+                    inode,
+                    (),
+                    0,
+                    False,
+                    now,
+                    ("Cache root is shared-writable or owned by another user",),
+                )
             pending = [Path(".")]
             while pending and visited < max_entries:
                 relative_dir = pending.pop()
                 try:
                     # Reopen from the known root, never through a symlink.
-                    with open_directory(root / relative_dir) as directory_fd:
+                    with open_relative_directory(root_fd, relative_dir) as directory_fd:
                         with os.scandir(directory_fd) as entries:
                             for entry in entries:
                                 if visited >= max_entries:
@@ -79,6 +91,7 @@ def create_cleanup_plan(home: Path | None = None, max_entries: int = 50000) -> C
                                     if stat.S_ISDIR(info.st_mode):
                                         if info.st_uid != os.getuid() or info.st_mode & 0o022:
                                             skipped += 1
+                                            complete = False
                                         else:
                                             pending.append(relative)
                                         continue

@@ -1,89 +1,139 @@
 # Pulse
 
-System health, without the noise.
+System health, without the noise. **OBSERVE → UNDERSTAND → FIX**
 
-**OBSERVE → UNDERSTAND → FIX**
+Pulse is a macOS-first system health and maintenance engine for a future consumer
+desktop application. This Python implementation exposes structured APIs and a
+CLI for development and validation. No GUI, telemetry, cloud service or AI is
+implemented. Windows and Linux are not supported targets for this milestone.
 
-Pulse is a macOS-first system health application for everyday computer users.
-The current v0.1 foundation uses Python 3.12+ and a temporary, read-only CLI
-for development and testing. It observes CPU usage, memory, root disk usage,
-and uptime. The intended primary interface is a desktop application; GUI and
-cleanup implementation are deferred. Windows and Linux are not currently
-supported targets.
+## Install and develop
 
-## Development
+Python 3.12+ on macOS is required. Development is tested on Apple Silicon.
 
 ```sh
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[dev]'
-pulse --help
-pulse status
 pytest
 ruff check .
 ruff format --check .
 ```
 
-CPU usage is sampled over 0.5 seconds. Memory and disk sizes are shown in GiB.
-Disk figures describe the root filesystem as reported by psutil; macOS APFS
-shared volumes and reclaimable space can differ from Finder's storage display.
+## Commands
 
-`src/pulse/core/system.py` collects metrics with psutil.
-`src/pulse/cli.py` presents them with Typer and Rich.
+| Command | Behavior |
+| --- | --- |
+| `pulse status` | OS version, architecture, cores, load, CPU, memory, disk, swap, battery and network totals |
+| `pulse processes --sort cpu --limit 10` | Accessible processes ranked by sampled CPU |
+| `pulse processes --sort memory` | Rank by resident memory |
+| `pulse health` / `pulse health --json` | Explainable snapshot findings; no storage scan |
+| `pulse doctor` | Resource observations and manual next steps |
+| `pulse scan` / `pulse scan --details` | Read-only inventory of known cache/report locations |
+| `pulse scan --json` | Structured inventory with inaccessible-root problems |
+| `pulse clean --dry-run` | Plan and validate eligible pip cache files without filesystem writes |
+| `pulse clean --dry-run --json` | Structured plan and execution preview |
+| `pulse clean --category pip-http` | Display plan, ask confirmation (default NO), execute and report |
+| `pulse optimize` | Manual maintenance recommendations; no automatic changes |
 
-This version only observes the system. Cleaner, AI, and GUI features are outside
-v0.1 scope.
+Use `--details` on `clean` to show every planned file and individual result.
+No command scans the whole filesystem. Storage scanning is explicit, with progress
+shown by the CLI. `status` and `health` never traverse cache directories.
 
-## Understand resource usage
+## What measurements mean
 
-```sh
-pulse processes --sort cpu --limit 10
-pulse processes --sort memory
-pulse doctor
-```
+CPU is sampled for 0.5 seconds. Process CPU is sampled twice with a shared wait;
+100% represents one logical core and multithreaded apps can exceed 100%. RSS is
+resident memory, not unique allocation, and should not be summed across apps.
+Process owners can be unavailable; exited/inaccessible processes are skipped.
+Command lines, environment variables and packet contents are never inspected.
 
-Process CPU is sampled twice with a shared 0.5 second wait. 100% represents one
-logical core, so a multithreaded process can exceed 100%. RSS is resident memory,
-not unique memory; shared pages mean process RSS values should not be summed.
-Inaccessible or exited processes are skipped and counted. Names are displayed as
-plain text, without inspecting command lines or environment variables.
+On macOS, psutil memory `used`, available memory and percentage have different
+definitions; the displayed percentage need not equal used/total. None is a
+measurement of macOS Memory Pressure. Root filesystem usage can also differ
+from Finder due to APFS shared volumes and reserved space. Health uses the
+available/total space ratio when available. Battery charge is not battery
+condition. Network totals are cumulative; rate APIs need two monotonic samples
+and return unknown after counter resets. Optional unavailable metrics are not
+silently treated as healthy.
 
-`doctor` reports observations at CPU ≥85%, memory ≥85%, or root disk ≥90%.
-These are simple heuristics, not proof of a problem. In particular, macOS memory
-pressure requires additional context. Recommendations are manual; Pulse does
-not delete files, stop processes, or alter settings.
+## Health rules
 
-## Extended metrics and cleanup preview
+Rules are deterministic and return evidence and manual recommendations:
 
-`pulse status` also reports available memory, free disk space, swap, and battery
-charge/power source when accessible. Charge is not a battery condition assessment.
-The psutil memory percentage and its `used` field have different definitions on
-macOS; the percentage need not equal the displayed used/total ratio. Available
-memory is a separate estimate and is not a macOS Memory Pressure measurement.
+- CPU ≥85%: snapshot warning, not proof of sustained overload.
+- Memory ≥85% and swap ≥2 GiB: informational observations, not pressure claims.
+- Available disk space ≤10%: warning; ≤5%: critical.
+- Battery charge ≤10% while unplugged: warning.
+- Process CPU ≥100% or RSS ≥25% of installed RAM: informational review.
 
-`pulse scan` inventories only pip's macOS cache and Xcode DerivedData, in the
-separate developer category. It never deletes files or scans personal documents.
-Symlinked roots and children are skipped. Each location is limited to 50,000
-entries; permission failures or skipped entries make coverage partial. File
-lengths are estimates, not allocated/reclaimable disk space, and hardlinks are
-counted once per location. Missing/inaccessible roots are omitted, so this is
-not a full disk scan. Filesystem changes during scanning can affect results.
+Overall status reflects warning/critical severity. “No alerts in this sample” is
+not a clean bill of health. No numerical health score or speed improvement is
+promised. Large complete cache inventories can produce review recommendations
+through the optimization API; their size is not guaranteed reclaimable space.
 
-Cleanup execution and desktop UI are not implemented yet.
+## Storage and cleanup safety
 
-## Health and maintenance APIs
+Known locations include pip, npm, pnpm, Yarn, Xcode DerivedData, Homebrew, Gradle,
+Cargo downloads, Go builds, macOS help, Safari/Chrome caches, diagnostic reports
+and Trash. Categories stay separate. Missing locations are normal; inaccessible
+roots are reported. Each location has a 50,000-entry budget. Symlinks, mount
+changes and special files are skipped; incomplete coverage is explicit. Logical
+file lengths are estimates, not actual disk allocation; hardlinks are counted
+once per location. No file contents are read. Recovery staging folders are
+excluded from subsequent inventories.
 
-`pulse health` (or `pulse health --json`) performs a quick, deterministic analysis
-without scanning storage. `pulse optimize` additionally samples processes and
-returns manual recommendations; it never stops apps or changes settings.
+**Only recognized files in `~/Library/Caches/pip/http-v2` are executable cleanup
+candidates.** Browser caches/profiles, Trash, diagnostics, Xcode build data and
+other categories remain review-only or protected. Pulse never deletes Documents,
+Desktop, Downloads, media, projects, credentials, unknown app data or system files.
+A large directory never becomes SAFE just because of its size.
 
-Rules: CPU ≥85% is a snapshot warning; memory ≥85% and swap ≥2 GiB are informational
-observations, not proof of pressure. Available system-disk space ≤10% warns and
-≤5% is critical. Battery charge ≤10% warns only while unplugged. Process CPU ≥100%
-or RSS ≥25% of installed RAM prompts review, not automatic termination. Overall
-status is the maximum warning/critical severity, not a numerical score. “No alerts”
-only describes the measured sample. Network rates can be calculated from two
-monotonic-time counter samples and are unknown when counters reset.
+A pip cache file qualifies only if its hash-based cache layout is recognized,
+it is a regular single-link file owned by the current user, and both access and
+modification times are at least seven days old. This is an allowlisted cache
+policy, not content recognition. Close pip/installers first; removed downloads
+will need to be fetched again. Unexpected/incomplete/expired plans are refused.
+Plans expire after 15 minutes and are bound to a home, root device and inode.
 
-Import `pulse.services.monitor.collect_snapshot`, `pulse.health.engine.analyze_health`,
-and `pulse.optimization.engine.recommend_maintenance` for structured Python APIs.
+The workflow is scan → classify → plan → display → confirm → execute → report.
+The API defaults to dry-run; actual CLI cleanup requires an explicit category
+and interactive confirmation defaulting to NO. There is no `--yes` bypass.
+Execution validates the allowlisted path, owner, directory permissions and file
+identity again. Every directory component is opened without following symlinks.
+The file is atomically staged in a private directory before a second identity
+check and single-file unlink. No recursive deletion or shell removal is used.
+If a replacement or failure is detected after staging, the file is preserved and
+the report includes its recovery path. There is no automatic purge of recovery
+files. Successful cache deletion is permanent, not a Trash operation.
+
+Reports distinguish deleted/skipped/failed/would-delete, logical bytes removed,
+blocked-plan reasons and recovery paths. Actual reclaimed space remains unknown
+on APFS because shared extents, snapshots and other activity prevent attribution.
+Callers can persist the structured report for their own audit trail; the CLI
+prints results but does not maintain an on-disk cleanup journal yet. Descriptor
+checks reduce races; they do not promise protection against a hostile process
+running as the same user or an active writer with an already-open file handle.
+
+No sudo, automatic process killing, login-item changes, security-setting changes,
+RAM boosters or preference mutations are performed. Cleanup tests use temporary
+fixtures only. Real-data validation uses read-only commands and dry-run.
+
+## Python APIs and architecture
+
+See [architecture](docs/architecture.md) for the stage boundaries.
+
+- `pulse.core.system.get_system_stats()` → immutable system metrics
+- `pulse.core.processes.get_process_stats()` → processes and coverage
+- `pulse.core.network.network_activity(before, after)` → network rates
+- `pulse.health.engine.analyze_health(stats, processes=None)` → issues and status
+- `pulse.cleanup.scanner.scan_storage()` → candidates and access problems
+- `pulse.cleanup.planner.create_cleanup_plan()` → eligible file plan
+- `pulse.cleanup.executor.execute_cleanup(plan, dry_run=True)` → explicit results
+- `pulse.optimization.engine.recommend_maintenance(report, candidates=())` → recommendations
+- `pulse.services.monitor.collect_snapshot()` → quick monitor snapshot
+- `pulse.services.engine.scan_computer()` → explicit full scan and recommendations
+
+Core/health/cleanup/optimization/services have no Rich or Typer dependencies.
+Filesystem scope is macOS-specific and intentionally narrow. Future OS adapters
+should implement their own policies rather than reusing macOS cache paths.

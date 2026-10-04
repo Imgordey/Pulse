@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from pulse.cleanup.scanner import CleanupCandidate
+from pulse.cleanup.models import CleanupCandidate
 from pulse.health.models import HealthReport
 
 

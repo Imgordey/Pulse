@@ -1,22 +1,12 @@
-"""Bounded, read-only inventory of explicitly known cache directories."""
+"""Bounded read-only inventory of known caches; no general filesystem crawl."""
 
 import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
 
-
-@dataclass(frozen=True)
-class CleanupCandidate:
-    path: Path
-    category: str
-    size: int
-    description: str
-    risk_level: str
-    removable: bool
-    reason: str
-    complete: bool
-    skipped: int
+from pulse.cleanup.filesystem import open_directory, open_relative_directory
+from pulse.cleanup.models import CleanupCandidate, Safety, ScanProblem, StorageScan
 
 
 @dataclass(frozen=True)
@@ -24,67 +14,62 @@ class CacheLocation:
     relative_path: str
     category: str
     description: str
+    safety: Safety = Safety.review
 
 
 LOCATIONS = (
     CacheLocation("Library/Caches/pip", "developer", "Python package download cache"),
     CacheLocation("Library/Developer/Xcode/DerivedData", "developer", "Xcode generated build data"),
+    CacheLocation("Library/Caches/Homebrew", "developer", "Homebrew downloads"),
+    CacheLocation(".npm/_cacache", "developer", "npm package cache"),
+    CacheLocation("Library/pnpm/store", "developer", "pnpm package store"),
+    CacheLocation("Library/Caches/Yarn", "developer", "Yarn package cache"),
+    CacheLocation(".gradle/caches", "developer", "Gradle build caches"),
+    CacheLocation(".cargo/registry/cache", "developer", "Cargo download cache"),
+    CacheLocation("Library/Caches/go-build", "developer", "Go build cache"),
+    CacheLocation("Library/Caches/com.apple.helpd", "application_cache", "macOS help cache"),
+    CacheLocation("Library/Caches/com.apple.Safari", "browser_cache", "Safari cache"),
+    CacheLocation("Library/Caches/Google/Chrome", "browser_cache", "Chrome cache"),
+    CacheLocation("Library/Logs/DiagnosticReports", "diagnostics", "Diagnostic reports"),
+    CacheLocation(".Trash", "trash", "Trash contents (manual review only)", Safety.protected),
 )
 
 
-def _safe_root(home: Path, relative_path: str) -> Path | None:
-    current = home
-    try:
-        if not stat.S_ISDIR(current.lstat().st_mode):
-            return None
-        for part in Path(relative_path).parts:
-            current = current / part
-            if not stat.S_ISDIR(current.lstat().st_mode):
-                return None
-    except OSError:
-        return None
-    return current
-
-
-def scan_cleanup(home: Path | None = None, max_entries: int = 50000) -> list[CleanupCandidate]:
-    """Return known caches only; sizes are estimates, not guaranteed reclaimed bytes.
-
-    No symlinks are intentionally traversed. This inventory is not an authorization
-    to delete: live applications and filesystem changes require a later safety check.
-    """
-    if max_entries < 1:
-        raise ValueError("max_entries must be positive")
-    home = Path.home() if home is None else home
-    result: list[CleanupCandidate] = []
-    for location in LOCATIONS:
-        root = _safe_root(home, location.relative_path)
-        if root is None:
-            continue
-        pending = [root]
-        visited: set[tuple[int, int]] = set()
-        size = skipped = entries = 0
-        complete = True
-        while pending and entries < max_entries:
-            directory = pending.pop()
-            try:
-                if not stat.S_ISDIR(directory.lstat().st_mode):
+def _inventory(root_fd: int, max_entries: int) -> tuple[int, int, bool]:
+    root_info = os.fstat(root_fd)
+    pending = [(Path("."), root_info.st_dev, root_info.st_ino)]
+    seen: set[tuple[int, int]] = set()
+    size = skipped = visited = 0
+    complete = True
+    while pending and visited < max_entries:
+        relative, expected_device, expected_inode = pending.pop()
+        try:
+            with open_relative_directory(root_fd, relative) as directory_fd:
+                actual = os.fstat(directory_fd)
+                if (actual.st_dev, actual.st_ino) != (expected_device, expected_inode):
                     skipped += 1
                     complete = False
                     continue
-                with os.scandir(directory) as children:
-                    for child in children:
-                        if entries >= max_entries:
+                with os.scandir(directory_fd) as entries:
+                    for entry in entries:
+                        if visited >= max_entries:
                             complete = False
                             break
-                        entries += 1
+                        visited += 1
                         try:
-                            info = child.stat(follow_symlinks=False)
-                            if stat.S_ISDIR(info.st_mode):
-                                pending.append(Path(child.path))
+                            info = entry.stat(follow_symlinks=False)
+                            if entry.name.startswith(".pulse-delete-"):
+                                skipped += 1
+                                complete = False
+                            elif info.st_dev != root_info.st_dev:
+                                skipped += 1
+                                complete = False
+                            elif stat.S_ISDIR(info.st_mode):
+                                pending.append((relative / entry.name, info.st_dev, info.st_ino))
                             elif stat.S_ISREG(info.st_mode):
                                 identity = (info.st_dev, info.st_ino)
-                                if identity not in visited:
-                                    visited.add(identity)
+                                if identity not in seen:
+                                    seen.add(identity)
                                     size += info.st_size
                             else:
                                 skipped += 1
@@ -92,22 +77,51 @@ def scan_cleanup(home: Path | None = None, max_entries: int = 50000) -> list[Cle
                         except OSError:
                             skipped += 1
                             complete = False
-            except OSError:
-                skipped += 1
-                complete = False
-        if pending:
+        except OSError:
+            skipped += 1
             complete = False
+    return size, skipped, complete and not pending
+
+
+def scan_storage(home: Path | None = None, max_entries: int = 50000) -> StorageScan:
+    """Estimate known directory sizes; inaccessible roots remain visible as problems.
+
+    Logical lengths are not reclaimable bytes. Unknown data, browser profiles,
+    Documents, projects and Downloads are never eligible for engine deletion.
+    """
+    if not 1 <= max_entries <= 50000:
+        raise ValueError("max_entries must be between 1 and 50000")
+    home = Path.home() if home is None else home
+    result: list[CleanupCandidate] = []
+    problems: list[ScanProblem] = []
+    for location in LOCATIONS:
+        root = home / location.relative_path
+        try:
+            with open_directory(root) as root_fd:
+                size, skipped, complete = _inventory(root_fd, max_entries)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            problems.append(ScanProblem(root, exc.strerror or type(exc).__name__))
+            continue
         result.append(
             CleanupCandidate(
                 path=root,
                 category=location.category,
                 size=size,
                 description=location.description,
-                risk_level="review_required",
+                risk_level=location.safety.value,
                 removable=False,
-                reason="Rebuildable data; close related tools and review before cleanup.",
+                reason="Review contents and close related apps; large does not mean disposable.",
                 complete=complete,
                 skipped=skipped,
+                id=location.relative_path,
+                safety=location.safety,
             )
         )
-    return result
+    return StorageScan(tuple(result), tuple(problems))
+
+
+def scan_cleanup(home: Path | None = None, max_entries: int = 50000) -> list[CleanupCandidate]:
+    """Compatibility API; use scan_storage to also retrieve inaccessible-root problems."""
+    return list(scan_storage(home, max_entries).candidates)

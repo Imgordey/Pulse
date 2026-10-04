@@ -19,6 +19,7 @@ class ProcessStats:
 class ProcessSnapshot:
     processes: tuple[ProcessStats, ...]
     skipped: int
+    error: str | None = None
 
 
 def get_process_stats(interval: float = 0.5) -> ProcessSnapshot:
@@ -26,12 +27,15 @@ def get_process_stats(interval: float = 0.5) -> ProcessSnapshot:
         raise ValueError("Sampling interval must be at least 0.1 seconds")
     candidates: list[psutil.Process] = []
     skipped = 0
-    for process in psutil.process_iter():
-        try:
-            process.cpu_percent(None)
-            candidates.append(process)
-        except (psutil.NoSuchProcess, psutil.AccessDenied, ProcessLookupError, PermissionError):
-            skipped += 1
+    try:
+        for process in psutil.process_iter():
+            try:
+                process.cpu_percent(None)
+                candidates.append(process)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, ProcessLookupError, PermissionError):
+                skipped += 1
+    except (OSError, psutil.Error) as exc:
+        return ProcessSnapshot((), skipped, f"Process listing unavailable: {exc}")
     time.sleep(interval)
     result: list[ProcessStats] = []
     for process in candidates:

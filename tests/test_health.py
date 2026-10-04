@@ -41,3 +41,19 @@ def test_heavy_process_evidence_and_incomplete_coverage() -> None:
 
 def test_no_fake_optimization_when_quiet() -> None:
     assert recommend_maintenance(analyze_health(BASE)) == ()
+
+
+def test_storage_severity_boundaries() -> None:
+    for free, expected in (
+        (11, None),
+        (10, Severity.warning),
+        (6, Severity.warning),
+        (5, Severity.critical),
+        (0, Severity.critical),
+    ):
+        report = analyze_health(replace(BASE, disk_free=free))
+        assert (
+            [i.severity for i in report.issues] == []
+            if expected is None
+            else [i.severity for i in report.issues] == [expected]
+        )

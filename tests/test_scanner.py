@@ -55,3 +55,42 @@ def test_scan_budget_is_bounded(tmp_path: Path) -> None:
     assert not result.complete
     with pytest.raises(ValueError):
         scan_cleanup(tmp_path, max_entries=0)
+
+
+def test_trash_is_inspection_only(tmp_path: Path) -> None:
+    from pulse.cleanup.models import Safety
+
+    trash = tmp_path / ".Trash"
+    trash.mkdir()
+    file = trash / "personal-photo"
+    file.write_bytes(b"personal content")
+    result = scan_cleanup(tmp_path)[0]
+    assert result.safety == Safety.protected
+    assert not result.removable
+    assert file.read_bytes() == b"personal content"
+
+
+def test_recovery_directories_are_excluded(tmp_path: Path) -> None:
+    cache = tmp_path / "Library/Caches/pip"
+    staged = cache / ".pulse-delete-recovery"
+    staged.mkdir(parents=True)
+    (staged / "payload").write_bytes(b"preserve me")
+    result = scan_cleanup(tmp_path)[0]
+    assert result.size == 0
+    assert not result.complete
+
+
+def test_inaccessible_roots_reported(tmp_path: Path, monkeypatch) -> None:
+    from contextlib import contextmanager
+
+    from pulse.cleanup import scanner
+
+    @contextmanager
+    def denied(_):
+        raise PermissionError("Protected by OS")
+        yield
+
+    monkeypatch.setattr(scanner, "open_directory", denied)
+    report = scanner.scan_storage(tmp_path)
+    assert report.candidates == ()
+    assert report.problems

@@ -32,3 +32,23 @@ def test_samples_twice_and_skips_inaccessible_or_exited(monkeypatch):
 def test_rejects_short_sample():
     with pytest.raises(ValueError):
         processes.get_process_stats(0)
+
+
+def test_listing_permission_error_returns_unavailable_snapshot(monkeypatch) -> None:
+    monkeypatch.setattr(psutil, "process_iter", Mock(side_effect=PermissionError("Denied")))
+    snapshot = processes.get_process_stats()
+    assert snapshot.processes == ()
+    assert snapshot.error is not None
+
+
+def test_username_permission_does_not_drop_process(monkeypatch) -> None:
+    good = Mock(pid=12)
+    good.name.return_value = "worker"
+    good.username.side_effect = psutil.AccessDenied(12)
+    good.cpu_percent.return_value = 10.0
+    good.memory_info.return_value = SimpleNamespace(rss=1024)
+    monkeypatch.setattr(psutil, "process_iter", lambda: iter([good]))
+    monkeypatch.setattr(processes.time, "sleep", lambda _: None)
+    snapshot = processes.get_process_stats()
+    assert snapshot.processes[0].user is None
+    assert snapshot.skipped == 0

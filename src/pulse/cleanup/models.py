@@ -10,6 +10,37 @@ class Safety(StrEnum):
 
 
 @dataclass(frozen=True)
+class CleanupCandidate:
+    path: Path
+    category: str
+    size: int
+    description: str
+    risk_level: str
+    removable: bool
+    reason: str
+    complete: bool
+    skipped: int
+    id: str = ""
+    safety: Safety = Safety.review
+
+    @property
+    def size_bytes(self) -> int:
+        return self.size
+
+
+@dataclass(frozen=True)
+class ScanProblem:
+    path: Path
+    reason: str
+
+
+@dataclass(frozen=True)
+class StorageScan:
+    candidates: tuple[CleanupCandidate, ...]
+    problems: tuple[ScanProblem, ...]
+
+
+@dataclass(frozen=True)
 class FileIdentity:
     device: int
     inode: int
@@ -60,3 +91,4 @@ class CleanupReport:
     dry_run: bool
     bytes_removed: int
     bytes_reclaimed: int | None
+    blocked_reason: str | None = None

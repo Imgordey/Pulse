@@ -26,3 +26,18 @@ def open_directory(path: Path) -> Iterator[int]:
 
 def valid_relative(path: Path) -> bool:
     return bool(path.parts) and not path.is_absolute() and ".." not in path.parts
+
+
+@contextmanager
+def open_relative_directory(root_fd: int, relative: Path) -> Iterator[int]:
+    if relative != Path(".") and not valid_relative(relative):
+        raise ValueError("Invalid relative directory")
+    descriptor = os.dup(root_fd)
+    try:
+        for part in relative.parts:
+            child = os.open(part, DIRECTORY_FLAGS, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        yield descriptor
+    finally:
+        os.close(descriptor)
