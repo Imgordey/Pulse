@@ -153,3 +153,10 @@ See [architecture](docs/architecture.md) for the stage boundaries.
 Core/health/cleanup/optimization/services have no Rich or Typer dependencies.
 Filesystem scope is macOS-specific and intentionally narrow. Future OS adapters
 should implement their own policies rather than reusing macOS cache paths.
+
+## Automated checks
+
+GitHub Actions runs the deterministic test suite, Ruff and dependency checks on
+macOS with Python 3.12 and 3.13. Cleanup/recovery operations use disposable pytest
+fixtures. Actions are pinned to verified upstream commits and the workflow token
+has read-only repository contents permissions.
