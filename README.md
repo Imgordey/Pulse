@@ -4,9 +4,12 @@ System health, without the noise.
 
 **OBSERVE → UNDERSTAND → FIX**
 
-Pulse v0.1 is a macOS-first, read-only system diagnostics CLI for developers,
-using Python 3.12+. It observes CPU usage, memory, root disk usage, and uptime.
-Other platforms supported by psutil may also work.
+Pulse is a macOS-first system health application for everyday computer users.
+The current v0.1 foundation uses Python 3.12+ and a temporary, read-only CLI
+for development and testing. It observes CPU usage, memory, root disk usage,
+and uptime. The intended primary interface is a desktop application; GUI and
+cleanup implementation are deferred. Windows and Linux are not currently
+supported targets.
 
 ## Development
 
@@ -30,3 +33,40 @@ shared volumes and reclaimable space can differ from Finder's storage display.
 
 This version only observes the system. Cleaner, AI, and GUI features are outside
 v0.1 scope.
+
+## Understand resource usage
+
+```sh
+pulse processes --sort cpu --limit 10
+pulse processes --sort memory
+pulse doctor
+```
+
+Process CPU is sampled twice with a shared 0.5 second wait. 100% represents one
+logical core, so a multithreaded process can exceed 100%. RSS is resident memory,
+not unique memory; shared pages mean process RSS values should not be summed.
+Inaccessible or exited processes are skipped and counted. Names are displayed as
+plain text, without inspecting command lines or environment variables.
+
+`doctor` reports observations at CPU ≥85%, memory ≥85%, or root disk ≥90%.
+These are simple heuristics, not proof of a problem. In particular, macOS memory
+pressure requires additional context. Recommendations are manual; Pulse does
+not delete files, stop processes, or alter settings.
+
+## Extended metrics and cleanup preview
+
+`pulse status` also reports available memory, free disk space, swap, and battery
+charge/power source when accessible. Charge is not a battery condition assessment.
+The psutil memory percentage and its `used` field have different definitions on
+macOS; the percentage need not equal the displayed used/total ratio. Available
+memory is a separate estimate and is not a macOS Memory Pressure measurement.
+
+`pulse scan` inventories only pip's macOS cache and Xcode DerivedData, in the
+separate developer category. It never deletes files or scans personal documents.
+Symlinked roots and children are skipped. Each location is limited to 50,000
+entries; permission failures or skipped entries make coverage partial. File
+lengths are estimates, not allocated/reclaimable disk space, and hardlinks are
+counted once per location. Missing/inaccessible roots are omitted, so this is
+not a full disk scan. Filesystem changes during scanning can affect results.
+
+Cleanup execution and desktop UI are not implemented yet.
