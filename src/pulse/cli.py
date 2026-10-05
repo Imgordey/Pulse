@@ -239,6 +239,7 @@ def optimize() -> None:
 
 class CleanupCategory(StrEnum):
     pip_http = "pip-http"
+    pip_http_legacy = "pip-http-legacy"
 
 
 @app.command()
@@ -253,15 +254,24 @@ def clean(
         if not dry_run:
             console.print("--json is supported only with --dry-run.")
             raise typer.Exit(code=2)
-        plan = create_cleanup_plan()
+        plan = (
+            create_cleanup_plan(category=category.value)
+            if category == CleanupCategory.pip_http_legacy
+            else create_cleanup_plan()
+        )
         report = execute_cleanup(plan, dry_run=True)
         typer.echo(json.dumps({"plan": asdict(plan), "report": asdict(report)}, default=str))
         if not plan.complete:
             raise typer.Exit(code=1)
         return
     with console.status("Planning eligible cache cleanup…"):
-        plan = create_cleanup_plan()
+        plan = (
+            create_cleanup_plan(category=category.value)
+            if category == CleanupCategory.pip_http_legacy
+            else create_cleanup_plan()
+        )
     console.print("PULSE · Cleanup plan")
+    console.print(f"Category: {plan.category}", markup=False)
     console.print(f"Root: {plan.root}", markup=False)
     console.print(
         f"SAFE: {len(plan.files)} old download-cache files · estimate {_size(plan.estimated_bytes)}"
@@ -284,7 +294,7 @@ def clean(
         return
     if not dry_run:
         if category is None:
-            console.print("Select --category pip-http explicitly, or use --dry-run.")
+            console.print("Select a --category explicitly, or use --dry-run.")
             raise typer.Exit(code=2)
         console.print(
             "Removing these files requires future downloads. Close pip/package installers first."

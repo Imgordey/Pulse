@@ -33,7 +33,7 @@ ruff format --check .
 | `pulse scan --json` | Structured inventory with inaccessible-root problems |
 | `pulse clean --dry-run` | Plan and validate eligible pip cache files without filesystem writes |
 | `pulse clean --dry-run --json` | Structured plan and execution preview |
-| `pulse clean --category pip-http` | Display plan, ask confirmation (default NO), execute and report |
+| `pulse clean --category pip-http` (or `pip-http-legacy`) | Display plan, ask confirmation (default NO), execute and report |
 | `pulse history` / `pulse history --json` | Read private cleanup audit journals and potential recovery paths |
 | `pulse recover SOURCE --to ORIGINAL --dry-run` | Preview recovery of a preserved cache file |
 | `pulse recover SOURCE --to ORIGINAL` | Restore with confirmation, without overwriting existing data |
@@ -86,8 +86,8 @@ file lengths are estimates, not actual disk allocation; hardlinks are counted
 once per location. No file contents are read. Recovery staging folders are
 excluded from subsequent inventories.
 
-**Only recognized files in `~/Library/Caches/pip/http-v2` are executable cleanup
-candidates.** Browser caches/profiles, Trash, diagnostics, Xcode build data and
+**Only recognized files in `~/Library/Caches/pip/http-v2` and the legacy
+`~/Library/Caches/pip/http` are executable cleanup candidates.** Browser caches/profiles, Trash, diagnostics, Xcode build data and
 other categories remain review-only or protected. Pulse never deletes Documents,
 Desktop, Downloads, media, projects, credentials, unknown app data or system files.
 A large directory never becomes SAFE just because of its size.
@@ -160,3 +160,9 @@ GitHub Actions runs the deterministic test suite, Ruff and dependency checks on
 macOS with Python 3.12 and 3.13. Cleanup/recovery operations use disposable pytest
 fixtures. Actions are pinned to verified upstream commits and the workflow token
 has read-only repository contents permissions.
+
+`clean --category pip-http-legacy --dry-run` previews the old pip HTTP cache.
+Category selection is bound into the plan and revalidated at execution; selecting
+one category cannot clean another root. The allowlist is immutable and unsupported
+categories fail closed. Age, identity, ownership, journaling and recovery policies
+are identical for both HTTP cache formats. Other cache categories remain review-only.

@@ -38,7 +38,7 @@ fundamental metric collection failures are surfaced to the caller.
 
 Known limits: snapshot thresholds do not establish sustained problems; battery
 condition and macOS Memory Pressure are not measured; cleanup execution currently
-supports pip HTTP cache only; recovery is explicit rather than automatic; there is no
+supports pip HTTP caches (current and legacy) only; recovery is explicit rather than automatic; there is no
 startup-item controller or claimed APFS reclaimed-space measurement.
 
 Cleanup journals are append-only per run and synced before mutations. They are

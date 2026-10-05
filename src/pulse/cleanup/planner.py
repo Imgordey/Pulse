@@ -5,11 +5,27 @@ import re
 import stat
 import time
 from pathlib import Path
+from types import MappingProxyType
 
 from pulse.cleanup.filesystem import open_directory, open_relative_directory, valid_relative
 from pulse.cleanup.models import CleanupPlan, FileIdentity, PlannedFile, Safety
 
 PIP_ROOT = Path("Library/Caches/pip/http-v2")
+CACHE_ROOTS = MappingProxyType(
+    {
+        "pip-http": PIP_ROOT,
+        "pip-http-legacy": Path("Library/Caches/pip/http"),
+    }
+)
+
+
+def root_for_category(category: str) -> Path:
+    try:
+        return CACHE_ROOTS[category]
+    except KeyError as exc:
+        raise ValueError("Unsupported cleanup category") from exc
+
+
 MIN_AGE_SECONDS = 7 * 86400
 MAX_PLAN_AGE_SECONDS = 15 * 60
 
@@ -51,12 +67,14 @@ def classify_file(relative: Path, info: os.stat_result, now: float) -> tuple[Saf
     return Safety.safe, "Old pip HTTP download cache; pip can download it again"
 
 
-def create_cleanup_plan(home: Path | None = None, max_entries: int = 50000) -> CleanupPlan:
+def create_cleanup_plan(
+    home: Path | None = None, max_entries: int = 50000, *, category: str = "pip-http"
+) -> CleanupPlan:
     """Read-only bounded plan, bound to one home and one allowlisted root."""
     if not 1 <= max_entries <= 50000:
         raise ValueError("max_entries must be between 1 and 50000")
     home = Path.home() if home is None else home
-    root = home / PIP_ROOT
+    root = home / root_for_category(category)
     now = time.time()
     files: list[PlannedFile] = []
     skipped = visited = 0
@@ -78,6 +96,7 @@ def create_cleanup_plan(home: Path | None = None, max_entries: int = 50000) -> C
                     False,
                     now,
                     ("Cache root is shared-writable or owned by another user",),
+                    category,
                 )
             pending = [Path(".")]
             while pending and visited < max_entries:
@@ -121,5 +140,5 @@ def create_cleanup_plan(home: Path | None = None, max_entries: int = 50000) -> C
         warnings.append(f"Cache unavailable: {exc.strerror or type(exc).__name__}")
     files.sort(key=lambda file: str(file.relative_path))
     return CleanupPlan(
-        home, root, device, inode, tuple(files), skipped, complete, now, tuple(warnings)
+        home, root, device, inode, tuple(files), skipped, complete, now, tuple(warnings), category
     )

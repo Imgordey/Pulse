@@ -70,6 +70,7 @@ class CleanupPlan:
     complete: bool
     created_at: float
     warnings: tuple[str, ...] = ()
+    category: str = "pip-http"
 
     @property
     def estimated_bytes(self) -> int:

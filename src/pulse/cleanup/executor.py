@@ -22,7 +22,7 @@ from pulse.cleanup.models import (
     PlannedFile,
     Safety,
 )
-from pulse.cleanup.planner import MAX_PLAN_AGE_SECONDS, PIP_ROOT, classify_file, identity
+from pulse.cleanup.planner import MAX_PLAN_AGE_SECONDS, classify_file, identity, root_for_category
 
 
 def _same_content(before: FileIdentity, after: FileIdentity) -> bool:
@@ -142,7 +142,11 @@ def _execute_cleanup(
     expected_home = Path.home() if home is None else home
     now = time.time()
     blocked: str | None = None
-    if plan.home != expected_home or plan.root != expected_home / PIP_ROOT:
+    try:
+        allowed_root = expected_home / root_for_category(plan.category)
+    except ValueError:
+        allowed_root = None
+    if plan.home != expected_home or plan.root != allowed_root:
         blocked = "Protected path: plan is outside the allowlisted cache root"
     elif not plan.complete:
         blocked = "Incomplete plan; scan again before cleanup"
@@ -210,7 +214,10 @@ def execute_cleanup(
     try:
         with create_journal(expected_home) as journal:
             journal_path = journal.path
-            journal.append("started", {"root": str(plan.root), "files": len(plan.files)})
+            journal.append(
+                "started",
+                {"root": str(plan.root), "category": plan.category, "files": len(plan.files)},
+            )
             report = _execute_cleanup(
                 plan, dry_run=False, confirmed=True, home=home, journal=journal
             )

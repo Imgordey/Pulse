@@ -9,7 +9,7 @@ from pathlib import Path
 from pulse.cleanup.filesystem import open_directory, validate_owned_directory_chain
 from pulse.cleanup.journal import create_journal
 from pulse.cleanup.models import FileIdentity
-from pulse.cleanup.planner import PIP_ROOT, identity, known_cache_path
+from pulse.cleanup.planner import CACHE_ROOTS, identity, known_cache_path
 
 
 @dataclass(frozen=True)
@@ -31,8 +31,14 @@ class RecoveryResult:
 
 
 def _validate_scope(source: Path, destination: Path, home: Path) -> None:
-    relative = destination.relative_to(home / PIP_ROOT)
-    if not known_cache_path(relative):
+    relative = None
+    for root in CACHE_ROOTS.values():
+        try:
+            relative = destination.relative_to(home / root)
+            break
+        except ValueError:
+            continue
+    if relative is None or not known_cache_path(relative):
         raise ValueError("Recovery destination is outside the known cache layout")
     if (
         source.name != "payload"
