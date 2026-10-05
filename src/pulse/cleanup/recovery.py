@@ -10,7 +10,7 @@ from pulse.cleanup.filesystem import open_directory, validate_owned_directory_ch
 from pulse.cleanup.journal import create_journal
 from pulse.cleanup.models import FileIdentity
 from pulse.cleanup.planner import CACHE_ROOTS, identity, known_cache_path
-from pulse.storage.trash import validate_download_path
+from pulse.storage.trash import validate_personal_file_path
 
 
 @dataclass(frozen=True)
@@ -33,16 +33,18 @@ class RecoveryResult:
 
 def _validate_scope(source: Path, destination: Path, home: Path) -> None:
     relative = None
-    for root in CACHE_ROOTS.values():
+    category = "pip-http"
+    for key, root in CACHE_ROOTS.items():
         try:
             relative = destination.relative_to(home / root)
+            category = key
             break
         except ValueError:
             continue
     download = False
-    if relative is None or not known_cache_path(relative):
+    if relative is None or not known_cache_path(relative, category):
         try:
-            validate_download_path(destination, home)
+            validate_personal_file_path(destination, home)
             download = True
         except (ValueError, OSError) as exc:
             raise ValueError("Recovery destination is outside supported locations") from exc

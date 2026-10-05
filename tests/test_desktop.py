@@ -374,3 +374,48 @@ def test_filename_is_literal_in_confirmation(qt, monkeypatch):
     )
     assert observed == [(Qt.TextFormat.PlainText, text, QMessageBox.StandardButton.No)]
     parent.close()
+
+
+def test_storage_cancel_and_deep_scan_limits(qt, window, tmp_path, monkeypatch):
+    from pulse.cleanup.models import StorageScan
+    from pulse.desktop import window as module
+    from pulse.services.engine import ComputerScan
+
+    options = []
+
+    def scan(**kwargs):
+        options.append(kwargs)
+        assert kwargs["cancel"].wait(timeout=2)
+        return ComputerScan(None, StorageScan((), (), complete=False, cancelled=True), ())
+
+    monkeypatch.setattr(module, "scan_computer", scan)
+    window.storage.scan_mode.setCurrentIndex(1)
+    window.scan()
+    wait_until(qt, lambda: bool(options))
+    assert window.storage.cancel.isEnabled()
+    assert options[0]["max_seconds"] == 120 and options[0]["max_entries"] == 250000
+    window.stop_analysis()
+    wait_until(qt, lambda: window.task is None)
+    assert "Stopped" in window.storage.summary.text()
+    assert not window.storage.cancel.isEnabled() and window.storage.scan.isEnabled()
+
+
+def test_physical_disk_view_shows_unknown_and_reported_failure(qt):
+    from pulse.core.drives import DriveSnapshot, DriveStats
+    from pulse.desktop.extra_pages import SystemPage
+
+    page = SystemPage()
+    page.display_drives(
+        DriveSnapshot(
+            (
+                DriveStats("disk0", "Fixture", "USB", None, False, None, "Not Supported"),
+                DriveStats("disk1", "Second", None, 1_000_000_000, True, True, "Failing"),
+            ),
+            (),
+            True,
+        )
+    )
+    text = page.drives.toPlainText()
+    assert "Not Supported" in text and "Unavailable" in text
+    assert "1.0 GB" in text and "Back up" in text
+    page.close()

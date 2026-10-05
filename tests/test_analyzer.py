@@ -153,3 +153,12 @@ def test_elapsed_time_budget_stops_before_file_walk(tmp_path, monkeypatch):
     result = analyze_directory(tmp_path, max_seconds=1)
     assert not result.complete and result.inspected == 0
     assert result.exclusions["scan budget reached"] == 1
+
+
+def test_hardlink_deduplication_does_not_mean_incomplete_coverage(tmp_path):
+    file = tmp_path / "first"
+    file.write_bytes(b"one inode")
+    os.link(file, tmp_path / "second")
+    result = analyze_directory(tmp_path)
+    assert result.complete and result.files == 1 and result.logical_bytes == 9
+    assert result.exclusions["duplicate hard links"] == 1

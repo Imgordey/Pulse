@@ -8,14 +8,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from pulse.presentation.formatting import format_size as size_text
 
-def size_text(value: int) -> str:
-    number = float(value)
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if number < 1024 or unit == "TiB":
-            return f"{number:.1f} {unit}"
-        number /= 1024
-    raise AssertionError("Unreachable")
+__all__ = ["Metric", "label", "size_text", "table"]
 
 
 def label(text: str = "", role: str = "") -> QLabel:

@@ -16,6 +16,6 @@ executable = EXE(
 collection = COLLECT(executable, analysis.binaries, analysis.datas, name="Pulse")
 app = BUNDLE(
     collection, name="Pulse.app", icon=str(root / "build/Pulse.icns"),
-    bundle_identifier="io.github.imgordey.pulse", version="0.3.0",
+    bundle_identifier="io.github.imgordey.pulse", version="0.4.0",
     info_plist={"NSHighResolutionCapable": True, "LSMinimumSystemVersion": "13.0"},
 )

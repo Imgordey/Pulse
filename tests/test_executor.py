@@ -174,3 +174,30 @@ def test_unlink_failure_preserves_staged_file(cache_file: tuple[Path, Path], mon
     assert result.recovery_path is not None
     assert result.recovery_path.exists()
     assert report.bytes_removed == 0
+
+
+def test_cancel_stops_between_files_and_preserves_remaining(cache_file, monkeypatch):
+    import time
+    from threading import Event
+
+    from pulse.cleanup import executor
+
+    home, file = cache_file
+    other = file.with_suffix("")
+    other.write_bytes(b"another eligible cache file")
+    os.utime(other, (time.time() - 8 * 86400,) * 2)
+    plan = create_cleanup_plan(home)
+    cancel = Event()
+    remove = executor._remove_file
+
+    def remove_one(*args):
+        result = remove(*args)
+        cancel.set()
+        return result
+
+    monkeypatch.setattr(executor, "_remove_file", remove_one)
+    report = executor.execute_cleanup(plan, dry_run=False, confirmed=True, home=home, cancel=cancel)
+    assert [item.status for item in report.results] == ["deleted", "skipped"]
+    assert sum(path.exists() for path in (file, other)) == 1
+    assert "Cancelled" in report.results[1].reason
+    assert report.journal_path and report.bytes_removed == plan.files[0].identity.size

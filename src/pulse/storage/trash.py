@@ -1,4 +1,4 @@
-"""Reviewed regular files in Downloads only. Native Trash adapter; no deletion fallback."""
+"""Reviewed personal files use native Trash, without a deletion fallback."""
 
 import os
 import stat
@@ -16,6 +16,39 @@ from pulse.cleanup.filesystem import (
 from pulse.cleanup.journal import Journal, create_journal
 from pulse.cleanup.models import FileIdentity
 from pulse.cleanup.planner import identity
+
+PERSONAL_FOLDERS = ("Downloads", "Desktop", "Documents", "Movies", "Music", "Pictures")
+PROTECTED_PACKAGES = (
+    ".app",
+    ".bundle",
+    ".photoslibrary",
+    ".photolibrary",
+    ".musiclibrary",
+    ".framework",
+    ".plugin",
+    ".kext",
+    ".sparsebundle",
+    ".backupbundle",
+    ".pvm",
+    ".vmwarevm",
+    ".pages",
+    ".numbers",
+    ".key",
+    ".mbox",
+)
+
+
+def personal_file_scope(path: Path, home: Path) -> bool:
+    try:
+        relative = path.relative_to(home)
+    except ValueError:
+        return False
+    return (
+        len(relative.parts) >= 2
+        and relative.parts[0] in PERSONAL_FOLDERS
+        and all(not part.startswith(".") for part in relative.parts)
+        and not any(part.lower().endswith(PROTECTED_PACKAGES) for part in relative.parts[:-1])
+    )
 
 
 @dataclass(frozen=True)
@@ -39,18 +72,18 @@ class TrashResult:
     audit_error: str | None = None
 
 
-def validate_download_path(path: Path, home: Path) -> None:
-    relative = path.relative_to(home / "Downloads")
-    if not relative.parts or any(part.startswith(".") or part == ".." for part in relative.parts):
-        raise ValueError("Only visible files inside your Downloads folder are supported")
-    if any(part.lower().endswith((".app", ".bundle", ".photoslibrary")) for part in relative.parts):
-        raise ValueError("Application and library packages are protected")
+def validate_personal_file_path(path: Path, home: Path) -> None:
+    if not personal_file_scope(path, home):
+        raise ValueError(
+            "Only visible files in Downloads, Desktop, Documents, Movies, Music "
+            "or Pictures are supported. Hidden files and package contents are protected."
+        )
     validate_owned_directory_chain(home, path.parent)
 
 
 def prepare_trash(path: Path, *, home: Path | None = None) -> TrashPlan:
     home = Path.home() if home is None else home
-    validate_download_path(path, home)
+    validate_personal_file_path(path, home)
     with open_directory(path.parent) as fd:
         parent = os.fstat(fd)
         info = os.stat(path.name, dir_fd=fd, follow_symlinks=False)
@@ -153,7 +186,7 @@ def execute_trash(
     try:
         if plan.home != home or not 0 <= time.time() - plan.created_at <= 900:
             raise ValueError("Plan expired or belongs to a different home; review again")
-        validate_download_path(plan.path, home)
+        validate_personal_file_path(plan.path, home)
     except (OSError, ValueError) as exc:
         return replace(result, reason=str(exc))
     try:

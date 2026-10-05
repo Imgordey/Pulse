@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from pulse.cleanup.models import CleanupPlan
+from pulse.cleanup.policies import cache_policy
 from pulse.desktop import dialogs
 from pulse.desktop.widgets import label, size_text, table
 
@@ -29,9 +30,9 @@ class CleanupDialog(QDialog):
         layout.addWidget(label(str(plan.root), "muted"))
         layout.addWidget(
             label(
-                "Only recognized pip download cache files unused for at least seven days "
-                "appear here. "
-                "Close pip and installers first. Removed downloads may need to be fetched again. "
+                f"Recognized cache files with recorded access/modification at least "
+                f"{cache_policy(plan.category).minimum_age_days} days ago appear here. "
+                f"{cache_policy(plan.category).consequence} "
                 "Removal is permanent; files do not go to Trash."
             )
         )

@@ -15,7 +15,7 @@ def main() -> int:
         raise
     application = QApplication(sys.argv)
     application.setApplicationName("Pulse")
-    application.setApplicationVersion("0.3.0")
+    application.setApplicationVersion("0.4.0")
     application.setOrganizationName("Pulse")
     window = PulseWindow()
     window.show()

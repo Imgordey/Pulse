@@ -53,3 +53,29 @@ def test_missing_and_bounded_plan(tmp_path: Path, cache_file: tuple[Path, Path])
     assert not plan.files
     with pytest.raises(ValueError):
         create_cleanup_plan(home, max_entries=0)
+
+
+def test_replaced_subdirectory_is_not_planned(cache_file, monkeypatch):
+    from contextlib import contextmanager
+
+    from pulse.cleanup import planner
+
+    home, file = cache_file
+    other = home / "replacement"
+    other.mkdir()
+    original = planner.open_relative_directory
+
+    @contextmanager
+    def replaced(fd, relative):
+        if relative == Path("a"):
+            with planner.open_directory(other) as replacement:
+                yield replacement
+        else:
+            with original(fd, relative) as child:
+                yield child
+
+    monkeypatch.setattr(planner, "open_relative_directory", replaced)
+    result = planner.create_cleanup_plan(home)
+    assert not result.complete and not result.files
+    assert any("changed" in warning for warning in result.warnings)
+    assert file.exists()

@@ -11,14 +11,24 @@ from rich.text import Text
 
 from pulse.cleanup.executor import execute_cleanup
 from pulse.cleanup.planner import create_cleanup_plan
+from pulse.cleanup.policies import POLICIES
 from pulse.cleanup.scanner import scan_storage
 from pulse.core.diagnostics import assess_system
 from pulse.core.processes import get_process_stats
 from pulse.core.system import get_system_stats
 from pulse.health.engine import analyze_health
 from pulse.optimization.engine import recommend_maintenance
+from pulse.presentation.formatting import format_gb as _gb
+from pulse.presentation.formatting import format_size as _size
 from pulse.presentation.maintenance import history_command, recover_command
-from pulse.presentation.storage import analyze_command, maintain_command, volumes_command
+from pulse.presentation.storage import (
+    analyze_command,
+    categories_command,
+    drives_command,
+    maintain_command,
+    trash_command,
+    volumes_command,
+)
 
 app = typer.Typer(
     name="pulse",
@@ -31,6 +41,9 @@ app.command("recover")(recover_command)
 app.command("analyze")(analyze_command)
 app.command("volumes")(volumes_command)
 app.command("maintain")(maintain_command)
+app.command("drives")(drives_command)
+app.command("clean-categories")(categories_command)
+app.command("trash")(trash_command)
 
 
 @app.callback(invoke_without_command=True)
@@ -40,19 +53,6 @@ def main(ctx: typer.Context) -> None:
         console.print("[bold]PULSE[/bold]")
         console.print("[dim]System health, without the noise.[/dim]")
         console.print("Run [bold]pulse status[/bold] to observe your system.")
-
-
-def _gib(value: int) -> str:
-    return f"{value / (1024**3):.1f} GiB"
-
-
-def _size(value: int) -> str:
-    amount = float(value)
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if amount < 1024 or unit == "TiB":
-            return f"{amount:.1f} {unit}"
-        amount /= 1024
-    raise AssertionError("Unreachable")
 
 
 def _uptime(seconds: int) -> str:
@@ -84,17 +84,17 @@ def status() -> None:
     table.add_row("CPU", f"{stats.cpu_percent:.1f}%")
     table.add_row(
         "Memory",
-        f"{_gib(stats.memory_used)} / {_gib(stats.memory_total)} ({stats.memory_percent:.1f}%)",
+        f"{_gb(stats.memory_used)} / {_gb(stats.memory_total)} ({stats.memory_percent:.1f}%)",
     )
     table.add_row(
         "Disk (/)",
-        f"{_gib(stats.disk_used)} / {_gib(stats.disk_total)} ({stats.disk_percent:.1f}%)",
+        f"{_gb(stats.disk_used)} / {_gb(stats.disk_total)} ({stats.disk_percent:.1f}%)",
     )
-    table.add_row("Available memory", _gib(stats.memory_available))
+    table.add_row("Available memory", _gb(stats.memory_available))
     table.add_row(
-        "Free disk space", "Unavailable" if stats.disk_free is None else _gib(stats.disk_free)
+        "Free disk space", "Unavailable" if stats.disk_free is None else _gb(stats.disk_free)
     )
-    table.add_row("Swap", f"{_gib(stats.swap_used)} / {_gib(stats.swap_total)}")
+    table.add_row("Swap", f"{_gb(stats.swap_used)} / {_gb(stats.swap_total)}")
     if stats.battery is None:
         table.add_row("Battery", "Unavailable")
     else:
@@ -138,7 +138,7 @@ def processes(
             str(process.pid),
             Text(process.name),
             f"{process.cpu_percent:.1f}%",
-            _gib(process.memory_rss),
+            _gb(process.memory_rss),
         )
     console.print(table)
     console.print("CPU: 100% equals one logical core. RAM: resident memory, not unique allocation.")
@@ -173,14 +173,16 @@ def doctor() -> None:
 def scan(
     details: bool = typer.Option(False, "--details"),
     json_output: bool = typer.Option(False, "--json"),
+    seconds: float = typer.Option(30, min=0.1, max=300),
+    max_entries: int = typer.Option(50000, min=1, max=250000),
 ) -> None:
     """Preview known caches and diagnostic reports. Never deletes files."""
     if json_output:
-        storage = scan_storage()
+        storage = scan_storage(max_seconds=seconds, max_entries=max_entries)
         typer.echo(json.dumps(asdict(storage), default=str, ensure_ascii=False))
         return
     with console.status("Scanning known cache locations…"):
-        storage = scan_storage()
+        storage = scan_storage(max_seconds=seconds, max_entries=max_entries)
     table = Table(title="PULSE · Storage preview (read-only)")
     for column in ("Location", "Size estimate", "Safety", "Coverage"):
         table.add_column(column)
@@ -200,8 +202,10 @@ def scan(
     for problem in storage.problems:
         console.print(f"Unavailable: {problem.path}: {problem.reason}", markup=False)
     console.print(
-        "Review required. No files were deleted. Sizes are not guaranteed reclaimable space."
+        f"{'Complete' if storage.complete else 'Partial'} inventory · "
+        f"{storage.inspected:,} entries · {len(storage.unscanned)} locations not scanned"
     )
+    console.print("Review required. No files were deleted. Sizes are not reclaimable space.")
 
 
 @app.command()
@@ -244,6 +248,9 @@ def optimize() -> None:
 class CleanupCategory(StrEnum):
     pip_http = "pip-http"
     pip_http_legacy = "pip-http-legacy"
+    npm_content = "npm-content"
+    go_build = "go-build"
+    cargo_downloads = "cargo-downloads"
 
 
 @app.command()
@@ -253,14 +260,14 @@ def clean(
     details: bool = typer.Option(False, "--details"),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Review and explicitly remove old pip HTTP cache files. Defaults to NO."""
+    """Review and explicitly remove recognized old cache files. Defaults to NO."""
     if json_output:
         if not dry_run:
             console.print("--json is supported only with --dry-run.")
             raise typer.Exit(code=2)
         plan = (
             create_cleanup_plan(category=category.value)
-            if category == CleanupCategory.pip_http_legacy
+            if category is not None
             else create_cleanup_plan()
         )
         report = execute_cleanup(plan, dry_run=True)
@@ -271,7 +278,7 @@ def clean(
     with console.status("Planning eligible cache cleanup…"):
         plan = (
             create_cleanup_plan(category=category.value)
-            if category == CleanupCategory.pip_http_legacy
+            if category is not None
             else create_cleanup_plan()
         )
     console.print("PULSE · Cleanup plan")
@@ -281,7 +288,7 @@ def clean(
         f"SAFE: {len(plan.files)} old download-cache files · estimate {_size(plan.estimated_bytes)}"
     )
     console.print(
-        f"Excluded: {plan.skipped}. Only recognized files unused for at least seven days qualify."
+        f"Excluded: {plan.skipped}. Only recognized files older than the selected policy qualify."
     )
     for warning in plan.warnings:
         console.print(warning, markup=False)
@@ -300,9 +307,7 @@ def clean(
         if category is None:
             console.print("Select a --category explicitly, or use --dry-run.")
             raise typer.Exit(code=2)
-        console.print(
-            "Removing these files requires future downloads. Close pip/package installers first."
-        )
+        console.print(POLICIES[plan.category].consequence, markup=False)
         if not typer.confirm("Permanently remove only these reviewed cache files?", default=False):
             console.print("Cancelled. No changes made.")
             return

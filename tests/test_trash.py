@@ -207,3 +207,69 @@ def test_shared_download_directory_refused(download):
             prepare_trash(file, home=home)
     finally:
         file.parent.chmod(0o700)
+
+
+@pytest.mark.parametrize("folder", ["Desktop", "Documents", "Movies", "Music", "Pictures"])
+def test_personal_file_can_be_reviewed_and_restored(tmp_path, folder):
+    home = tmp_path / "home"
+    file = home / folder / "ordinary-file.txt"
+    file.parent.mkdir(parents=True)
+    file.write_bytes(b"personal fixture")
+    trash = home / ".Trash"
+    trash.mkdir(mode=0o700)
+
+    def adapter(source):
+        target = trash / source.name
+        source.rename(target)
+        return target
+
+    result = execute_trash(
+        prepare_trash(file, home=home), move_to_trash=adapter, confirmed=True, home=home
+    )
+    assert result.status == "trashed"
+    plan = prepare_recovery(result.trash_path, file, home)
+    assert recover_file(plan, dry_run=False, confirmed=True, home=home).status == "restored"
+    assert file.read_bytes() == b"personal fixture"
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "Documents/Secret.app/Contents/data",
+        "Pictures/Photos.photoslibrary/originals/file",
+        "Documents/.ssh/key",
+        "Documents/.git/config",
+        "Library/Caches/file",
+        "Documents/Book.pages/Data/file",
+        "Movies/Machine.vmwarevm/disk",
+        "Documents/../outside",
+    ],
+)
+def test_hidden_system_and_package_paths_remain_protected(tmp_path, relative):
+    from pulse.storage.trash import personal_file_scope
+
+    assert not personal_file_scope(tmp_path / relative, tmp_path)
+
+
+def test_regular_document_with_package_extension_can_be_reviewed(tmp_path):
+    file = tmp_path / "Documents" / "Book.pages"
+    file.parent.mkdir()
+    file.write_bytes(b"a regular document archive, not a directory")
+    assert prepare_trash(file, home=tmp_path).path == file
+
+
+def test_cli_trash_preview_and_cancel_never_execute(download, monkeypatch):
+    from typer.testing import CliRunner
+
+    from pulse.cli import app
+    from pulse.presentation import storage
+
+    home, file = download
+    monkeypatch.setattr(storage, "prepare_trash", lambda path: prepare_trash(path, home=home))
+    action = Mock()
+    monkeypatch.setattr(storage, "execute_trash", action)
+    assert CliRunner().invoke(app, ["trash", str(file), "--dry-run", "--json"]).exit_code == 0
+    result = CliRunner().invoke(app, ["trash", str(file)], input="n\n")
+    assert result.exit_code == 0 and "Cancelled" in result.stdout
+    action.assert_not_called()
+    assert file.exists()

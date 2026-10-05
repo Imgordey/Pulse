@@ -1,13 +1,13 @@
 import pytest
 
-from pulse.cli import _gib, _uptime
+from pulse.cli import _gb, _uptime
 
 
 @pytest.mark.parametrize(
-    "value,expected", [(0, "0.0 GiB"), (1024**3, "1.0 GiB"), (1536 * 1024**2, "1.5 GiB")]
+    "value,expected", [(0, "0.0 GB"), (1_000_000_000, "1.0 GB"), (1_500_000_000, "1.5 GB")]
 )
-def test_gib(value: int, expected: str) -> None:
-    assert _gib(value) == expected
+def test_gb(value: int, expected: str) -> None:
+    assert _gb(value) == expected
 
 
 @pytest.mark.parametrize(
@@ -20,7 +20,7 @@ def test_uptime(seconds: int, expected: str) -> None:
 
 @pytest.mark.parametrize(
     "value,expected",
-    [(0, "0.0 B"), (512, "512.0 B"), (1024, "1.0 KiB"), (1024**2, "1.0 MiB"), (1024**3, "1.0 GiB")],
+    [(0, "0.0 B"), (999, "999.0 B"), (1000, "1.0 KB"), (1_500_000, "1.5 MB"), (1024**3, "1.1 GB")],
 )
 def test_size(value: int, expected: str) -> None:
     from pulse.cli import _size

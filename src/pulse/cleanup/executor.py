@@ -6,6 +6,7 @@ import time
 import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
+from threading import Event
 
 from pulse.cleanup.filesystem import (
     DIRECTORY_FLAGS,
@@ -112,7 +113,7 @@ def _execute_item(
                 return CleanupResult(path, "skipped", "Cache root changed since planning")
         with open_directory(path.parent) as parent_fd:
             info = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
-            safety, reason = classify_file(item.relative_path, info, time.time())
+            safety, reason = classify_file(item.relative_path, info, time.time(), plan.category)
             if identity(info) != item.identity or safety != Safety.safe:
                 return CleanupResult(path, "skipped", f"File changed or unsafe: {reason}")
             if dry_run:
@@ -133,10 +134,11 @@ def _execute_cleanup(
     confirmed: bool = False,
     home: Path | None = None,
     journal: Journal | None = None,
+    cancel: Event | None = None,
 ) -> CleanupReport:
     """No writes in dry-run. Non-dry execution requires explicit caller confirmation.
 
-    Only regular, old, single-link pip HTTP cache files are eligible. Other cache
+    Only regular, old, single-link recognized cache files are eligible. Unsupported
     categories, arbitrary paths, incomplete/expired plans, and changed files fail closed.
     """
     expected_home = Path.home() if home is None else home
@@ -169,6 +171,14 @@ def _execute_cleanup(
     seen: set[Path] = set()
     audit_error = None
     for index, item in enumerate(plan.files):
+        if cancel is not None and cancel.is_set():
+            results.extend(
+                CleanupResult(
+                    plan.root / pending.relative_path, "skipped", "Cancelled before this file"
+                )
+                for pending in plan.files[index:]
+            )
+            break
         path = plan.root / item.relative_path
         if item.relative_path in seen:
             result = CleanupResult(path, "skipped", "Duplicate plan entry")
@@ -201,11 +211,14 @@ def execute_cleanup(
     dry_run: bool = True,
     confirmed: bool = False,
     home: Path | None = None,
+    cancel: Event | None = None,
 ) -> CleanupReport:
     """Persist an audit trail before actual cleanup. Dry-run never writes a journal."""
     if dry_run or not confirmed:
-        return _execute_cleanup(plan, dry_run=dry_run, confirmed=confirmed, home=home)
-    preview = _execute_cleanup(plan, dry_run=True, home=home)
+        return _execute_cleanup(
+            plan, dry_run=dry_run, confirmed=confirmed, home=home, cancel=cancel
+        )
+    preview = _execute_cleanup(plan, dry_run=True, home=home, cancel=cancel)
     if preview.blocked_reason or not any(r.status == "would_delete" for r in preview.results):
         return replace(preview, dry_run=False)
     expected_home = Path.home() if home is None else home
@@ -219,7 +232,7 @@ def execute_cleanup(
                 {"root": str(plan.root), "category": plan.category, "files": len(plan.files)},
             )
             report = _execute_cleanup(
-                plan, dry_run=False, confirmed=True, home=home, journal=journal
+                plan, dry_run=False, confirmed=True, home=home, journal=journal, cancel=cancel
             )
             report = replace(report, journal_path=journal.path)
             counts: dict[str, int] = {}

@@ -112,6 +112,8 @@ def analyze_directory(
                                     pending.clear()
                                     break
                                 inspected += 1
+                                if progress is not None and inspected % 1000 == 0:
+                                    progress(AnalysisProgress(inspected, logical))
                                 path = relative / entry.name
                                 bucket = path.parts[0]
                                 try:
@@ -158,8 +160,6 @@ def analyze_directory(
                                         heapq.heapreplace(largest, candidate)
                                 except OSError as exc:
                                     problem(root / path, exc)
-                                if progress is not None and inspected % 1000 == 0:
-                                    progress(AnalysisProgress(inspected, logical))
                 except OSError as exc:
                     problem(root / relative, exc)
     except OSError as exc:
@@ -182,7 +182,7 @@ def analyze_directory(
         allocated,
         files,
         inspected,
-        not exclusions,
+        not any(count for reason, count in exclusions.items() if reason != "duplicate hard links"),
         cancelled,
         dict(exclusions),
         tuple(problems),

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pulse.cleanup.policies import POLICIES
 from pulse.core.processes import ProcessSnapshot
 from pulse.desktop.widgets import Metric, label, size_text, table
 from pulse.health.models import Issue
@@ -112,7 +113,7 @@ class StoragePage(QWidget):
         )
         self.summary = label("Storage has not been scanned yet. Choose Scan storage to begin.")
         layout.addWidget(self.summary)
-        self.inventory = table(["Location", "Logical size", "Coverage", "Policy"])
+        self.inventory = table(["Location", "Logical size", "Allocated", "Coverage", "Policy"])
         layout.addWidget(self.inventory, 1)
         self.details = text_view()
         self.details.setMaximumHeight(150)
@@ -123,17 +124,24 @@ class StoragePage(QWidget):
         self.scan = QPushButton("Scan storage")
         self.scan.setProperty("role", "primary")
         actions.addWidget(self.scan)
+        self.scan_mode = QComboBox()
+        self.scan_mode.addItem("Standard (30s)", (30, 50000))
+        self.scan_mode.addItem("Deep (120s)", (120, 250000))
+        actions.addWidget(self.scan_mode)
+        self.cancel = QPushButton("Stop current work")
+        self.cancel.setEnabled(False)
+        actions.addWidget(self.cancel)
         actions.addStretch()
         self.category = QComboBox()
-        self.category.addItem("pip downloads (current)", "pip-http")
-        self.category.addItem("pip downloads (legacy)", "pip-http-legacy")
+        for policy in POLICIES.values():
+            self.category.addItem(policy.title, policy.id)
         actions.addWidget(self.category)
         self.preview = QPushButton("Review cleanup…")
         actions.addWidget(self.preview)
         layout.addLayout(actions)
         layout.addWidget(
             label(
-                "Cleanup supports old, recognized pip downloads only. "
+                "Cleanup supports recognized old pip, npm, Go and Cargo cache files. "
                 "Other locations are review-only. "
                 "Size is not a promise of reclaimable space.",
                 "muted",
@@ -147,18 +155,35 @@ class StoragePage(QWidget):
             for column, text in enumerate(
                 (
                     candidate.description,
-                    size_text(candidate.size),
+                    ("≥ " if not candidate.complete else "") + size_text(candidate.size),
+                    ("≥ " if not candidate.complete else "") + size_text(candidate.allocated_bytes),
                     "Complete" if candidate.complete else "Partial",
                     candidate.safety.value.capitalize(),
                 )
             ):
                 self.inventory.setItem(row, column, QTableWidgetItem(text))
+        state = (
+            "Stopped"
+            if scan.storage.cancelled
+            else "Complete"
+            if scan.storage.complete
+            else "Partial"
+        )
         self.summary.setText(
-            f"{len(self.candidates)} known locations · "
-            f"{len(scan.storage.problems)} access problems · Scanned {datetime.now():%H:%M:%S}"
+            f"{state} · "
+            f"{len(self.candidates)} locations · {len(scan.storage.problems)} access problems · "
+            f"{len(scan.storage.unscanned)} not scanned · {scan.storage.elapsed_seconds:.1f}s"
         )
         self.details.setPlainText(
-            "\n".join(f"{problem.path}: {problem.reason}" for problem in scan.storage.problems)
+            "\n".join(
+                [f"{problem.path}: {problem.reason}" for problem in scan.storage.problems]
+                + [f"Not scanned: {path}" for path in scan.storage.unscanned]
+                + (
+                    [f"Resource sample unavailable: {scan.monitor_error}"]
+                    if scan.monitor_error
+                    else []
+                )
+            )
             or "Select a location for its path and cleanup policy."
         )
 
@@ -167,7 +192,9 @@ class StoragePage(QWidget):
         if 0 <= row < len(self.candidates):
             entry = self.candidates[row]
             self.details.setPlainText(
-                f"{entry.path}\n{entry.reason}\nExcluded entries: {entry.skipped}"
+                f"{entry.path}\n{entry.reason}\nFiles counted: {entry.files}\n"
+                + "\n".join(f"{reason}: {count}" for reason, count in entry.exclusions.items())
+                + "\nExclusion events are not a count of all missing files."
             )
 
 
@@ -267,7 +294,7 @@ class HistoryPage(QWidget):
         layout.addLayout(actions)
         layout.addWidget(
             label(
-                "Recovery handles preserved files and supported downloads moved to Trash. "
+                "Recovery handles preserved files and supported files moved to Trash. "
                 "Successful deletions cannot be undone. "
                 "Each recovery is checked again and cannot overwrite an existing file.",
                 "muted",

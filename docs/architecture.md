@@ -5,20 +5,20 @@ The CLI and optional PySide6 desktop interface are replaceable presentation laye
 
 | Stage | Modules | Output / responsibility |
 | --- | --- | --- |
-| Collect | `core/system`, `core/processes`, `core/network`, `core/volumes` | Measured data, optional values and process coverage |
+| Collect | `core/system`, `core/processes`, `core/network`, `core/volumes`, `core/drives` | Measured data, optional values and process coverage |
 | Explore | `storage/analyzer` | Bounded metadata-only traversal, cancellation, logical/allocated sizes and coverage |
-| Trash | `storage/trash`, `desktop/platform` | Exact Downloads file, journal, private staging, native adapter; no deletion fallback |
+| Trash | `storage/trash`, `desktop/platform` | Exact personal file, journal, private staging, native adapter; no deletion fallback |
 | Maintain | `optimization/actions` | Fixed non-privileged macOS tool, explicit confirmation, timeout and audit |
 | Analyze | `health/engine` | Deterministic issues with severity, evidence and recommendations |
 | Scan | `cleanup/scanner` | Bounded, descriptor-based inventories; no writes |
-| Classify / plan | `cleanup/planner`, `cleanup/models` | Narrow allowlist, file identities, age, scope and completeness |
+| Classify / plan | `cleanup/policies`, `cleanup/planner`, `cleanup/models` | Narrow allowlist, file identities, age, scope and completeness |
 | Execute | `cleanup/executor`, `cleanup/filesystem` | Explicit confirmation, revalidation, staging, unlink and per-file results |
 | Audit / recover | `cleanup/journal`, `cleanup/recovery` | Local write-ahead records and explicit recovery without overwrite |
 | Recommend | `optimization/engine` | Real maintenance recommendations, no system mutations |
 | Coordinate | `services/monitor`, `services/engine` | Snapshots and explicit full scans reusable by a desktop UI |
 | Present | `cli`, `desktop` | CLI output, Qt views, background tasks and explicit user confirmation |
 
-Collectors do not import presentation. Scanning never authorizes deletion.
+Collectors do not import presentation. Scanning never authorizes deletion. Resource collection failure does not prevent storage inventory. All storage locations share a deadline, with per-location entry limits and cooperative cancellation. Cleanup cancellation stops between files; it never interrupts staging/unlink halfway.
 The planner does not trust inventory sizes as permission to clean. Execution
 revalidates independently and never accepts arbitrary cache categories. Default
 execution is a dry-run; GUI callers must show the exact plan and obtain explicit
@@ -41,7 +41,7 @@ fundamental metric collection failures are surfaced to the caller.
 
 Known limits: snapshot thresholds do not establish sustained problems; battery
 condition and macOS Memory Pressure are not measured; cleanup execution currently
-permanently removes pip HTTP caches only; selected regular Downloads files can be moved to
+permanently removes recognized old pip, npm, Go and Cargo cache files only; selected regular personal files can be moved to
 native Trash; recovery is explicit rather than automatic; there is no
 startup-item controller or claimed APFS reclaimed-space measurement.
 
@@ -58,7 +58,7 @@ or recovery; the report includes the audit error and subsequent operations stop.
 results and errors to the GUI thread. The window disables operation controls
 while busy and refuses to close during a job, so an active executor is not
 terminated. Monitoring refreshes only when active; scanning and journal reading
-are explicit actions. No Qt dependency is imported by the engine or CLI.
+are explicit actions. The engine and read-only CLI have no Qt dependency. Only confirmed CLI Trash execution lazily imports the native Qt adapter.
 
 `desktop/cleanup_dialog` derives a selected plan with `dataclasses.replace`,
 retaining category, root and file identities. Selection starts empty. A separate

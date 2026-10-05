@@ -44,7 +44,7 @@ def recover_command(
     destination: Annotated[Path, typer.Option("--to")],
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
-    """Restore a supported preserved file or trashed download without overwrite."""
+    """Restore a supported preserved file or trashed personal file without overwrite."""
     try:
         plan = prepare_recovery(source, destination)
     except (OSError, ValueError) as exc:

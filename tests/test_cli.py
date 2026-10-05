@@ -37,7 +37,7 @@ def test_status_renders_metrics(monkeypatch):
     )
     result = runner.invoke(cli.app, ["status"])
     assert result.exit_code == 0
-    for value in ("Darwin", "12.5%", "8.0 GiB", "50.0%", "Disk (/)", "20.0%", "1d 1h 1m"):
+    for value in ("Darwin", "12.5%", "8.6 GB", "50.0%", "Disk (/)", "20.0%", "1d 1h 1m"):
         assert value in result.output
 
 
@@ -126,7 +126,7 @@ def test_scan_does_not_delete_and_reports_partial(monkeypatch, tmp_path):
     monkeypatch.setattr(
         cli,
         "scan_storage",
-        lambda: StorageScan(
+        lambda **kwargs: StorageScan(
             tuple(
                 [
                     CleanupCandidate(
@@ -184,7 +184,9 @@ def test_clean_confirmation_defaults_to_no(cache_file, monkeypatch):
     from pulse.cleanup.planner import create_cleanup_plan
 
     home, file = cache_file
-    monkeypatch.setattr(cli, "create_cleanup_plan", lambda: create_cleanup_plan(home))
+    monkeypatch.setattr(
+        cli, "create_cleanup_plan", lambda **kwargs: create_cleanup_plan(home, **kwargs)
+    )
     monkeypatch.setattr(
         cli,
         "execute_cleanup",
@@ -203,7 +205,9 @@ def test_clean_dry_run_and_explicit_test_data_cleanup(cache_file, monkeypatch):
     from pulse.cleanup.planner import create_cleanup_plan
 
     home, file = cache_file
-    monkeypatch.setattr(cli, "create_cleanup_plan", lambda: create_cleanup_plan(home))
+    monkeypatch.setattr(
+        cli, "create_cleanup_plan", lambda **kwargs: create_cleanup_plan(home, **kwargs)
+    )
     monkeypatch.setattr(
         cli, "execute_cleanup", lambda plan, **kwargs: execute_cleanup(plan, home=home, **kwargs)
     )
@@ -221,7 +225,9 @@ def test_clean_requires_category(cache_file, monkeypatch):
     from pulse.cleanup.planner import create_cleanup_plan
 
     home, file = cache_file
-    monkeypatch.setattr(cli, "create_cleanup_plan", lambda: create_cleanup_plan(home))
+    monkeypatch.setattr(
+        cli, "create_cleanup_plan", lambda **kwargs: create_cleanup_plan(home, **kwargs)
+    )
     result = runner.invoke(cli.app, ["clean"], input="y\n")
     assert result.exit_code == 2
     assert file.exists()
@@ -234,7 +240,9 @@ def test_clean_json_dry_run_contains_plan_and_report(cache_file, monkeypatch):
     from pulse.cleanup.planner import create_cleanup_plan
 
     home, file = cache_file
-    monkeypatch.setattr(cli, "create_cleanup_plan", lambda: create_cleanup_plan(home))
+    monkeypatch.setattr(
+        cli, "create_cleanup_plan", lambda **kwargs: create_cleanup_plan(home, **kwargs)
+    )
     monkeypatch.setattr(
         cli, "execute_cleanup", lambda plan, **kwargs: execute_cleanup(plan, home=home, **kwargs)
     )

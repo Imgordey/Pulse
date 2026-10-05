@@ -94,3 +94,61 @@ def test_inaccessible_roots_reported(tmp_path: Path, monkeypatch) -> None:
     report = scanner.scan_storage(tmp_path)
     assert report.candidates == ()
     assert report.problems
+
+
+def test_additional_application_caches_are_inspection_only(tmp_path):
+    from pulse.cleanup.scanner import scan_storage
+
+    directory = tmp_path / "Library/Caches/com.example.app"
+    directory.mkdir(parents=True)
+    file = directory / "blob"
+    file.write_bytes(b"1234567")
+    result = scan_storage(tmp_path)
+    assert result.complete and len(result.candidates) == 1
+    entry = result.candidates[0]
+    assert entry.files == 1 and entry.size == 7
+    assert entry.allocated_bytes == file.stat().st_blocks * 512
+    assert not entry.removable
+
+
+def test_cancelled_inventory_returns_unscanned_locations(tmp_path):
+    from threading import Event
+
+    from pulse.cleanup.scanner import scan_storage
+
+    cancel = Event()
+    cancel.set()
+    result = scan_storage(tmp_path, cancel=cancel)
+    assert result.cancelled and not result.complete
+    assert result.unscanned and not result.candidates
+
+
+def test_inventory_time_budget_is_global(tmp_path, monkeypatch):
+    from pulse.cleanup import scanner
+
+    clock = iter([0, 2, 2])
+    monkeypatch.setattr(scanner.time, "monotonic", lambda: next(clock))
+    result = scanner.scan_storage(tmp_path, max_seconds=1)
+    assert not result.complete and result.unscanned
+
+
+def test_inventory_reports_progress_and_cancel_without_writes(tmp_path):
+    from threading import Event
+
+    from pulse.cleanup.scanner import scan_storage
+
+    directory = tmp_path / "Library/Caches/pip"
+    directory.mkdir(parents=True)
+    for index in range(1002):
+        (directory / str(index)).write_bytes(b"cache")
+    cancel = Event()
+    updates = []
+
+    def progress(value):
+        updates.append(value)
+        cancel.set()
+
+    result = scan_storage(tmp_path, cancel=cancel, progress=progress)
+    assert result.cancelled and not result.complete and result.inspected == 1000
+    assert len(list(directory.iterdir())) == 1002
+    assert updates[-1].inspected == 1000

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
@@ -22,6 +22,9 @@ class CleanupCandidate:
     skipped: int
     id: str = ""
     safety: Safety = Safety.review
+    allocated_bytes: int = 0
+    files: int = 0
+    exclusions: dict[str, int] = field(default_factory=dict)
 
     @property
     def size_bytes(self) -> int:
@@ -38,6 +41,20 @@ class ScanProblem:
 class StorageScan:
     candidates: tuple[CleanupCandidate, ...]
     problems: tuple[ScanProblem, ...]
+    complete: bool = True
+    cancelled: bool = False
+    unscanned: tuple[Path, ...] = ()
+    inspected: int = 0
+    elapsed_seconds: float = 0
+
+
+@dataclass(frozen=True)
+class ScanProgress:
+    location: Path
+    inspected: int
+    logical_bytes: int
+    locations_done: int
+    total_locations: int
 
 
 @dataclass(frozen=True)

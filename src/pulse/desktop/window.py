@@ -23,6 +23,7 @@ from pulse.cleanup.journal import read_history
 from pulse.cleanup.models import CleanupPlan, CleanupReport
 from pulse.cleanup.planner import create_cleanup_plan
 from pulse.cleanup.recovery import RecoveryPlan, RecoveryResult, prepare_recovery, recover_file
+from pulse.core.drives import get_drives
 from pulse.core.volumes import get_volumes
 from pulse.desktop import dialogs
 from pulse.desktop.cleanup_dialog import CleanupDialog
@@ -41,12 +42,14 @@ from pulse.storage.trash import TrashPlan, TrashResult, execute_trash, prepare_t
 
 class PulseWindow(QMainWindow):
     analysis_progress = Signal(object)
+    storage_progress = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
         self.task: Task | None = None
         self.scan_cancel: Event | None = None
         self.analysis_progress.connect(self.display_analysis_progress)
+        self.storage_progress.connect(self.display_storage_progress)
         self.setWindowTitle("Pulse — System health, without the noise")
         self.resize(1120, 760)
         self.setMinimumSize(900, 620)
@@ -117,6 +120,7 @@ class PulseWindow(QMainWindow):
         layout.addLayout(content, 1)
         self.refresh_button.clicked.connect(self.refresh)
         self.storage.scan.clicked.connect(self.scan)
+        self.storage.cancel.clicked.connect(self.stop_analysis)
         self.storage.preview.clicked.connect(self.preview_cleanup)
         self.history.reload.clicked.connect(self.reload_history)
         self.history.restore.clicked.connect(self.preview_recovery)
@@ -126,6 +130,7 @@ class PulseWindow(QMainWindow):
         self.explorer.cancel.clicked.connect(self.stop_analysis)
         self.explorer.trash.clicked.connect(self.preview_trash)
         self.system_details.read_volumes.clicked.connect(self.read_volumes)
+        self.system_details.read_drives.clicked.connect(self.read_drives)
         self.maintenance.review.clicked.connect(self.review_maintenance)
         self.timer = QTimer(self)
         self.timer.setInterval(30_000)
@@ -156,6 +161,7 @@ class PulseWindow(QMainWindow):
         for button in (
             self.refresh_button,
             self.storage.scan,
+            self.storage.scan_mode,
             self.storage.preview,
             self.history.reload,
             self.history.restore,
@@ -164,6 +170,7 @@ class PulseWindow(QMainWindow):
             self.explorer.open_folder,
             self.explorer.trash,
             self.system_details.read_volumes,
+            self.system_details.read_drives,
             self.maintenance.review,
         ):
             button.setEnabled(not busy)
@@ -181,6 +188,7 @@ class PulseWindow(QMainWindow):
         self.progress.hide()
         self.scan_cancel = None
         self.explorer.cancel.setEnabled(False)
+        self.storage.cancel.setEnabled(False)
         self.set_busy(False)
         if task is not None:
             task.deleteLater()
@@ -207,24 +215,48 @@ class PulseWindow(QMainWindow):
         self.message.setText("Sample updated. Storage scanning is separate and read-only.")
 
     def scan(self) -> None:
-        self.start_task("Scanning known cache locations…", scan_computer, self.display_scan)
+        cancel = Event()
+        seconds, entries = self.storage.scan_mode.currentData()
+        if self.start_task(
+            "Scanning cache locations…",
+            lambda: scan_computer(
+                cancel=cancel,
+                progress=self.storage_progress.emit,
+                max_seconds=seconds,
+                max_entries=entries,
+            ),
+            self.display_scan,
+        ):
+            self.scan_cancel = cancel
+            self.storage.cancel.setEnabled(True)
 
     def display_scan(self, scan: ComputerScan) -> None:
-        self.overview.display(scan.monitor)
-        self.system_details.display(scan.monitor.system)
-        self.processes.display(scan.monitor.processes)
+        if scan.monitor is not None:
+            self.overview.display(scan.monitor)
+            self.system_details.display(scan.monitor.system)
+            self.processes.display(scan.monitor.processes)
         self.storage.display(scan)
-        self.message.setText("Scan complete. No files changed.")
+        self.message.setText(
+            "Scan complete. No files changed."
+            if scan.storage.complete
+            else "Partial scan shown. Review coverage before cleanup."
+        )
 
     def preview_cleanup(self) -> None:
         category = self.storage.category.currentData()
-        self.start_task(
+        cancel = Event()
+        if self.start_task(
             "Building an exact cleanup preview…",
-            lambda: create_cleanup_plan(category=category),
+            lambda: create_cleanup_plan(category=category, cancel=cancel),
             self.show_cleanup,
-        )
+        ):
+            self.scan_cancel = cancel
+            self.storage.cancel.setEnabled(True)
 
     def show_cleanup(self, plan: CleanupPlan) -> None:
+        if self.scan_cancel is not None and self.scan_cancel.is_set():
+            self.message.setText("Cleanup preview cancelled. No files changed.")
+            return
         # Run after the worker has finished: modal dialogs run a nested event loop.
         QTimer.singleShot(0, lambda: self.review_cleanup(plan))
 
@@ -234,11 +266,14 @@ class PulseWindow(QMainWindow):
         try:
             if dialog.exec() == QDialog.DialogCode.Accepted and dialog.selected_plan is not None:
                 selected = dialog.selected_plan
-                self.start_task(
+                cancel = Event()
+                if self.start_task(
                     "Removing selected cache files…",
-                    lambda: execute_cleanup(selected, dry_run=False, confirmed=True),
+                    lambda: execute_cleanup(selected, dry_run=False, confirmed=True, cancel=cancel),
                     self.show_cleanup_result,
-                )
+                ):
+                    self.scan_cancel = cancel
+                    self.storage.cancel.setEnabled(True)
             else:
                 self.message.setText("Cleanup cancelled. No files changed.")
         finally:
@@ -360,8 +395,9 @@ class PulseWindow(QMainWindow):
     def stop_analysis(self) -> None:
         if self.scan_cancel is not None:
             self.scan_cancel.set()
-            self.message.setText("Stopping after the current metadata operation…")
+            self.message.setText("Stopping after the current file operation…")
             self.explorer.cancel.setEnabled(False)
+            self.storage.cancel.setEnabled(False)
 
     def display_analysis(self, analysis: DirectoryAnalysis) -> None:
         self.explorer.display(analysis)
@@ -369,6 +405,23 @@ class PulseWindow(QMainWindow):
             "Analysis stopped; partial results shown."
             if analysis.cancelled
             else "Folder analysis finished. No files changed."
+        )
+
+    def display_storage_progress(self, progress) -> None:
+        self.storage.summary.setText(
+            f"Inspecting {progress.location.name} · {progress.inspected:,} entries · "
+            f"{size_text(progress.logical_bytes)} logical so far"
+        )
+
+    def read_drives(self) -> None:
+        self.start_task("Reading physical disk information…", get_drives, self.display_drives)
+
+    def display_drives(self, snapshot) -> None:
+        self.system_details.display_drives(snapshot)
+        self.message.setText(
+            "Physical disk information updated."
+            if snapshot.complete
+            else "Some physical disk information is unavailable; see details."
         )
 
     def read_volumes(self) -> None:
@@ -382,7 +435,7 @@ class PulseWindow(QMainWindow):
         entry = self.explorer.selected()
         if entry and not entry.directory:
             self.start_task(
-                "Checking selected download…",
+                "Checking selected file…",
                 lambda: prepare_trash(entry.path),
                 lambda plan: QTimer.singleShot(0, lambda: self.review_trash(plan)),
             )
@@ -392,9 +445,10 @@ class PulseWindow(QMainWindow):
         try:
             answer = dialogs.question(
                 self,
-                "Move this download to Trash?",
+                "Move this file to Trash?",
                 f"{plan.path}\n\nSize: {size_text(plan.identity.size)}\n\n"
                 "Only this file will be moved. Trash still uses disk space. "
+                "Close apps using it first. Synced files may also move on other devices. "
                 "Restore through Pulse History if the native Trash path is available, or move it "
                 "manually from Trash to the original location. Finder Put Back may point to "
                 "Pulse's private staging folder.",
@@ -403,7 +457,7 @@ class PulseWindow(QMainWindow):
             )
             if answer == QMessageBox.StandardButton.Yes:
                 self.start_task(
-                    "Moving selected download to Trash…",
+                    "Moving selected file to Trash…",
                     lambda: execute_trash(plan, move_to_trash=move_to_trash, confirmed=True),
                     self.show_trash_result,
                 )
