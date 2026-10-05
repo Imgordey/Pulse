@@ -1,7 +1,7 @@
 # Engine boundaries
 
 Pulse exposes synchronous, typed Python functions and immutable dataclasses.
-The CLI is a replaceable presentation layer; no GUI framework is selected.
+The CLI and optional PySide6 desktop interface are replaceable presentation layers.
 
 | Stage | Modules | Output / responsibility |
 | --- | --- | --- |
@@ -13,7 +13,7 @@ The CLI is a replaceable presentation layer; no GUI framework is selected.
 | Audit / recover | `cleanup/journal`, `cleanup/recovery` | Local write-ahead records and explicit recovery without overwrite |
 | Recommend | `optimization/engine` | Real maintenance recommendations, no system mutations |
 | Coordinate | `services/monitor`, `services/engine` | Snapshots and explicit full scans reusable by a desktop UI |
-| Present | `cli` | Tables, formatting, progress, JSON output and user confirmation |
+| Present | `cli`, `desktop` | CLI output, Qt views, background tasks and explicit user confirmation |
 
 Collectors do not import presentation. Scanning never authorizes deletion.
 The planner does not trust inventory sizes as permission to clean. Execution
@@ -47,3 +47,17 @@ recovery hints from valid records preceding a malformed tail. Plans are always
 built and validated against the live filesystem rather than executed from logs.
 A final audit-write error does not erase or misreport already-completed deletion
 or recovery; the report includes the audit error and subsequent operations stop.
+
+## Desktop boundary
+
+`desktop/tasks` runs one synchronous engine call on a QThread. Signals deliver
+results and errors to the GUI thread. The window disables operation controls
+while busy and refuses to close during a job, so an active executor is not
+terminated. Monitoring refreshes only when active; scanning and journal reading
+are explicit actions. No Qt dependency is imported by the engine or CLI.
+
+`desktop/cleanup_dialog` derives a selected plan with `dataclasses.replace`,
+retaining category, root and file identities. Selection starts empty. A separate
+default-No confirmation precedes `confirmed=True, dry_run=False`. The executor
+remains the authority for scope, freshness and safety. History recovery hints
+are treated as data and passed through live recovery preparation/validation.

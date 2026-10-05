@@ -2,10 +2,57 @@
 
 System health, without the noise. **OBSERVE → UNDERSTAND → FIX**
 
-Pulse is a macOS-first system health and maintenance engine for a future consumer
-desktop application. This Python implementation exposes structured APIs and a
-CLI for development and validation. No GUI, telemetry, cloud service or AI is
-implemented. Windows and Linux are not supported targets for this milestone.
+Pulse is a macOS-first desktop application for understanding system resources,
+reviewing storage and safely removing eligible old pip download caches. The
+Python engine powers both a Qt desktop interface and a CLI. Everything stays
+local: no telemetry, account, cloud service or AI. Windows and Linux are not
+supported targets for this version.
+
+## Open the desktop application
+
+The locally built application is `dist/Pulse.app`; double-click it in Finder.
+It includes Python and Qt, so a separate Python installation is not required.
+This build targets Apple Silicon and macOS 13+. It is signed locally, without an
+Apple Developer ID or notarization; it is not a signed public release installer.
+
+From a development environment:
+
+```sh
+python -m pip install -e '.[dev,desktop]'
+pulse-desktop
+```
+
+- **Overview:** real resource samples, explainable findings and available storage.
+- **Storage:** an explicit read-only scan of known locations, coverage and policy.
+- **Processes:** search and rank apps/processes by processor or resident memory use.
+- **History:** local audit details and explicit recovery of files preserved after errors.
+
+The resource sample refreshes every 30 seconds while the window is active.
+Storage is scanned only on request. One background operation runs at a time;
+Pulse waits for it to finish before allowing the window to close. Collection
+errors appear with details, and the interface stays responsive during scans.
+
+**Review cleanup** shows the exact eligible files with every checkbox initially
+empty. Select the files you want to remove, then confirm permanent removal in a
+separate dialog (default No). Files are revalidated by the engine before deletion.
+Other storage categories remain review-only. Scan sizes are estimates, and APFS
+space actually reclaimed is not claimed. History is loaded on request; reload it
+after cleanup or recovery. Successfully deleted files cannot be restored.
+
+## Build a standalone macOS app
+
+```sh
+python -m pip install -e '.[desktop,build]'
+python packaging/build_macos.py
+```
+
+This creates `dist/Pulse.app` and `dist/Pulse-0.2.0-macos-arm64.zip` on an Apple
+Silicon Mac. Build on the target architecture; this is not a universal binary.
+The script generates the icon, bundles dependencies, adds runtime notices,
+checks the final local signature, and archives the app. It does not install into
+Applications or change macOS security settings. Rebuild after changing the source.
+Before a public binary release, finish third-party notices/source review and
+Apple Developer ID signing/notarization. Source development needs no Apple account.
 
 ## Install and develop
 
@@ -14,7 +61,7 @@ Python 3.12+ on macOS is required. Development is tested on Apple Silicon.
 ```sh
 python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[dev]'
+python -m pip install -e '.[dev,desktop]'
 pytest
 ruff check .
 ruff format --check .
@@ -157,7 +204,7 @@ should implement their own policies rather than reusing macOS cache paths.
 ## Automated checks
 
 GitHub Actions runs the deterministic test suite, Ruff and dependency checks on
-macOS with Python 3.12 and 3.13. Cleanup/recovery operations use disposable pytest
+macOS with Python 3.12 and 3.13, including offscreen desktop tests. Cleanup/recovery operations use disposable pytest
 fixtures. Actions are pinned to verified upstream commits and the workflow token
 has read-only repository contents permissions.
 

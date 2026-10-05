@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pulse-system"
-version = "0.1.0"
+version = "0.2.0"
 description = "A macOS-first system health application."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -16,12 +16,15 @@ dependencies = [
 
 [project.scripts]
 pulse = "pulse.cli:app"
+pulse-desktop = "pulse.desktop.launcher:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
+desktop = ["PySide6-Essentials>=6.8,<7"]
+build = ["pyinstaller>=6,<7"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
