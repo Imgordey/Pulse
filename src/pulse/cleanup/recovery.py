@@ -10,6 +10,7 @@ from pulse.cleanup.filesystem import open_directory, validate_owned_directory_ch
 from pulse.cleanup.journal import create_journal
 from pulse.cleanup.models import FileIdentity
 from pulse.cleanup.planner import CACHE_ROOTS, identity, known_cache_path
+from pulse.storage.trash import validate_download_path
 
 
 @dataclass(frozen=True)
@@ -38,10 +39,20 @@ def _validate_scope(source: Path, destination: Path, home: Path) -> None:
             break
         except ValueError:
             continue
+    download = False
     if relative is None or not known_cache_path(relative):
-        raise ValueError("Recovery destination is outside the known cache layout")
+        try:
+            validate_download_path(destination, home)
+            download = True
+        except (ValueError, OSError) as exc:
+            raise ValueError("Recovery destination is outside supported locations") from exc
+    if download and source.parent == home / ".Trash":
+        if source.name.startswith("."):
+            raise ValueError("Hidden Trash entries are protected")
+        validate_owned_directory_chain(home, source.parent)
+        return
     if (
-        source.name != "payload"
+        source.name != (destination.name if download else "payload")
         or source.parent.parent != destination.parent
         or not re.fullmatch(r"\.pulse-delete-[0-9a-f]{32}", source.parent.name)
     ):
@@ -76,7 +87,7 @@ def recover_file(
         _validate_scope(plan.source, plan.destination, home)
         with open_directory(plan.source.parent) as source_fd:
             with open_directory(plan.destination.parent) as destination_fd:
-                info = os.stat("payload", dir_fd=source_fd, follow_symlinks=False)
+                info = os.stat(plan.source.name, dir_fd=source_fd, follow_symlinks=False)
                 if (
                     not stat.S_ISREG(info.st_mode)
                     or info.st_uid != os.getuid()
@@ -106,7 +117,7 @@ def recover_file(
                         {"source": str(plan.source), "destination": str(plan.destination)},
                     )
                     os.link(
-                        "payload",
+                        plan.source.name,
                         plan.destination.name,
                         src_dir_fd=source_fd,
                         dst_dir_fd=destination_fd,
@@ -126,7 +137,7 @@ def recover_file(
                         "restore-linked",
                         {"source": str(plan.source), "destination": str(plan.destination)},
                     )
-                    os.unlink("payload", dir_fd=source_fd)
+                    os.unlink(plan.source.name, dir_fd=source_fd)
                     restored = True
                     try:
                         os.rmdir(plan.source.parent.name, dir_fd=destination_fd)
@@ -138,7 +149,7 @@ def recover_file(
                     )
                 return RecoveryResult(
                     "restored",
-                    "Cache file restored without overwrite",
+                    "File restored without overwrite",
                     plan.source,
                     plan.destination,
                     journal_path,

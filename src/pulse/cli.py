@@ -18,6 +18,7 @@ from pulse.core.system import get_system_stats
 from pulse.health.engine import analyze_health
 from pulse.optimization.engine import recommend_maintenance
 from pulse.presentation.maintenance import history_command, recover_command
+from pulse.presentation.storage import analyze_command, maintain_command, volumes_command
 
 app = typer.Typer(
     name="pulse",
@@ -27,6 +28,9 @@ app = typer.Typer(
 console = Console()
 app.command("history")(history_command)
 app.command("recover")(recover_command)
+app.command("analyze")(analyze_command)
+app.command("volumes")(volumes_command)
+app.command("maintain")(maintain_command)
 
 
 @app.callback(invoke_without_command=True)

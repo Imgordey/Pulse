@@ -111,7 +111,16 @@ def read_history(home: Path | None = None, limit: int = 20) -> tuple[dict[str, o
                                 raise ValueError("Invalid journal payload")
                             path = data.get("path")
                             if isinstance(path, str):
-                                if data.get("recovery_path"):
+                                if (
+                                    record.get("event") == "result"
+                                    and data.get("status") == "trashed"
+                                    and isinstance(data.get("trash_path"), str)
+                                ):
+                                    pending[path] = {
+                                        "path": path,
+                                        "recovery_path": data["trash_path"],
+                                    }
+                                elif data.get("recovery_path"):
                                     pending[path] = {
                                         "path": path,
                                         "recovery_path": data["recovery_path"],

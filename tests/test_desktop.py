@@ -18,6 +18,7 @@ from pulse.cleanup.executor import execute_cleanup  # noqa: E402
 from pulse.cleanup.planner import create_cleanup_plan  # noqa: E402
 from pulse.core.processes import ProcessSnapshot, ProcessStats  # noqa: E402
 from pulse.core.system import SystemStats  # noqa: E402
+from pulse.desktop import dialogs  # noqa: E402
 from pulse.desktop.cleanup_dialog import CleanupDialog  # noqa: E402
 from pulse.desktop.pages import HistoryPage, OverviewPage, ProcessesPage  # noqa: E402
 from pulse.desktop.tasks import Task  # noqa: E402
@@ -74,7 +75,7 @@ def test_selection_starts_empty_and_cancel_does_not_delete(qt, cache_file, monke
     assert dialog.remove.isEnabled()
     assert dialog.selection().estimated_bytes == file.stat().st_size
     question = Mock(return_value=QMessageBox.StandardButton.No)
-    monkeypatch.setattr(QMessageBox, "question", question)
+    monkeypatch.setattr(dialogs, "question", question)
     dialog.confirm_selection()
     assert dialog.selected_plan is None
     assert file.exists()
@@ -91,7 +92,7 @@ def test_confirmed_preview_binds_exact_selected_files(qt, cache_file, monkeypatc
     plan = create_cleanup_plan(home)
     dialog = CleanupDialog(plan)
     dialog.files.item(0, 0).setCheckState(Qt.CheckState.Checked)
-    monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(dialogs, "question", lambda *args: QMessageBox.StandardButton.Yes)
     dialog.confirm_selection()
     selected = dialog.selected_plan
     assert selected is not None and len(selected.files) == 1
@@ -109,7 +110,7 @@ def test_incomplete_preview_cannot_confirm(qt, cache_file, monkeypatch):
     dialog.select_all()
     assert not dialog.remove.isEnabled()
     question = Mock()
-    monkeypatch.setattr(QMessageBox, "question", question)
+    monkeypatch.setattr(dialogs, "question", question)
     dialog.confirm_selection()
     question.assert_not_called()
     dialog.close()
@@ -240,7 +241,7 @@ def test_recovery_cancel_never_starts_mutation(window, preserved_file, monkeypat
 
     home, source, destination = preserved_file
     question = Mock(return_value=QMessageBox.StandardButton.No)
-    monkeypatch.setattr(QMessageBox, "question", question)
+    monkeypatch.setattr(dialogs, "question", question)
     start = Mock()
     monkeypatch.setattr(window, "start_task", start)
     window.review_recovery(prepare_recovery(source, destination, home=home))
@@ -265,3 +266,111 @@ def test_refresh_never_traverses_storage(qt, window, monkeypatch):
     collect.assert_called_once_with(include_processes=True)
     scan.assert_not_called()
     clean.assert_not_called()
+
+
+def test_explorer_empty_selection_and_partial_coverage(qt, tmp_path):
+    from pulse.desktop.extra_pages import ExplorerPage
+    from pulse.storage.analyzer import analyze_directory
+
+    (tmp_path / "visible").write_bytes(b"fixture")
+    (tmp_path / "link").symlink_to(tmp_path / "visible")
+    page = ExplorerPage()
+    page.display(analyze_directory(tmp_path))
+    assert "Partial" in page.summary.text()
+    assert not page.trash.isEnabled()
+    assert page.selected() is None
+    page.results.selectRow(0)
+    assert "symbolic links" in page.details.toPlainText()
+    assert not page.trash.isEnabled()  # Outside Downloads.
+    page.close()
+
+
+def test_explorer_analysis_cancel_returns_partial_results(qt, window, tmp_path, monkeypatch):
+    from pulse.desktop import window as module
+    from pulse.storage.analyzer import analyze_directory
+
+    entered = []
+
+    def slow(root, *, cancel, progress):
+        entered.append(True)
+        assert cancel.wait(timeout=2)
+        return analyze_directory(root, cancel=cancel, progress=progress)
+
+    monkeypatch.setattr(module, "analyze_directory", slow)
+    window.explorer.root.setText(str(tmp_path))
+    window.analyze_folder()
+    wait_until(qt, lambda: bool(entered))
+    assert window.explorer.cancel.isEnabled() and not window.explorer.scan.isEnabled()
+    window.stop_analysis()
+    wait_until(qt, lambda: window.task is None)
+    assert window.explorer.analysis.cancelled
+    assert window.explorer.scan.isEnabled() and not window.explorer.cancel.isEnabled()
+
+
+def test_cancel_trash_and_maintenance_never_starts_action(window, tmp_path, monkeypatch):
+    from pulse.storage.trash import prepare_trash
+
+    home = tmp_path / "home"
+    file = home / "Downloads" / "fixture"
+    file.parent.mkdir(parents=True)
+    file.write_bytes(b"fixture")
+    start = Mock()
+    monkeypatch.setattr(window, "start_task", start)
+    question = Mock(return_value=QMessageBox.StandardButton.No)
+    monkeypatch.setattr(dialogs, "question", question)
+    window.review_trash(prepare_trash(file, home=home))
+    window.review_maintenance()
+    start.assert_not_called()
+    assert file.exists()
+    for call in question.call_args_list:
+        assert call.args[-1] == QMessageBox.StandardButton.No
+
+
+def test_system_detail_view_unknowns_and_volume_access(qt):
+    from pulse.core.volumes import VolumeStats
+    from pulse.desktop.extra_pages import SystemPage
+
+    page = SystemPage()
+    page.display(SystemStats("Darwin", 10, 3, 10, 30, 2, 100, 2, 3600))
+    assert "Load average (1 / 5 / 15 min): Unavailable" in page.metrics.toPlainText()
+    page.display_volumes((VolumeStats("disk", "/", "apfs", None, None, None, "", "denied"),))
+    assert page.volumes.item(0, 4).text() == "Unavailable"
+    assert "1 unavailable" in page.coverage.text()
+    page.close()
+
+
+def test_volume_read_finishes_with_result_message(qt, window, monkeypatch):
+    from pulse.core.volumes import VolumeStats
+    from pulse.desktop import window as module
+
+    monkeypatch.setattr(
+        module, "get_volumes", lambda: (VolumeStats("disk", "/", "apfs", 100, 40, 60, "rw"),)
+    )
+    window.read_volumes()
+    wait_until(qt, lambda: window.task is None)
+    assert window.system_details.volumes.item(0, 4).text() == "60.0 B"
+    assert "updated" in window.message.text()
+
+
+def test_filename_is_literal_in_confirmation(qt, monkeypatch):
+    observed = []
+
+    def answer(box):
+        observed.append((box.textFormat(), box.text(), box.standardButton(box.defaultButton())))
+        return int(QMessageBox.StandardButton.No)
+
+    monkeypatch.setattr(QMessageBox, "exec", answer)
+    parent = OverviewPage()
+    text = "/Downloads/<b>important</b>.dmg"
+    assert (
+        dialogs.question(
+            parent,
+            "Review",
+            text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        == QMessageBox.StandardButton.No
+    )
+    assert observed == [(Qt.TextFormat.PlainText, text, QMessageBox.StandardButton.No)]
+    parent.close()

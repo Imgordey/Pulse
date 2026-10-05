@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from pulse.cleanup.models import CleanupPlan
+from pulse.desktop import dialogs
 from pulse.desktop.widgets import label, size_text, table
 
 
@@ -100,7 +101,7 @@ class CleanupDialog(QDialog):
         selected = self.selection()
         if not selected.files or not selected.complete:
             return
-        answer = QMessageBox.question(
+        answer = dialogs.question(
             self,
             "Permanently remove cache files?",
             f"Remove {len(selected.files)} selected files "

@@ -73,7 +73,7 @@ def main() -> None:
     subprocess.run(
         ["codesign", "--verify", "--deep", "--strict", str(ROOT / "dist/Pulse.app")], check=True
     )
-    archive = ROOT / f"dist/Pulse-0.2.0-macos-{platform.machine()}.zip"
+    archive = ROOT / f"dist/Pulse-0.3.0-macos-{platform.machine()}.zip"
     subprocess.run(
         [
             "ditto",

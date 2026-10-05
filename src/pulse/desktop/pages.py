@@ -267,7 +267,7 @@ class HistoryPage(QWidget):
         layout.addLayout(actions)
         layout.addWidget(
             label(
-                "Recovery handles files preserved after an error. "
+                "Recovery handles preserved files and supported downloads moved to Trash. "
                 "Successful deletions cannot be undone. "
                 "Each recovery is checked again and cannot overwrite an existing file.",
                 "muted",

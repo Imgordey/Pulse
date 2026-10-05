@@ -3,7 +3,7 @@
 System health, without the noise. **OBSERVE → UNDERSTAND → FIX**
 
 Pulse is a macOS-first desktop application for understanding system resources,
-reviewing storage and safely removing eligible old pip download caches. The
+exploring storage, reviewing downloads and safely removing eligible old pip caches. The
 Python engine powers both a Qt desktop interface and a CLI. Everything stays
 local: no telemetry, account, cloud service or AI. Windows and Linux are not
 supported targets for this version.
@@ -25,7 +25,11 @@ pulse-desktop
 - **Overview:** real resource samples, explainable findings and available storage.
 - **Storage:** an explicit read-only scan of known locations, coverage and policy.
 - **Processes:** search and rank apps/processes by processor or resident memory use.
-- **History:** local audit details and explicit recovery of files preserved after errors.
+- **Disk explorer:** choose a folder, inspect its largest files and immediate children,
+  compare logical lengths with allocated blocks, filter results and drill into folders.
+- **System details:** measured RAM, swap, CPU/load, network counters and individual mounted volumes.
+- **Maintenance:** explicitly rebuild Finder thumbnail caches when previews are stale.
+- **History:** local audit details and reviewed recovery of preserved files and supported trashed downloads.
 
 The resource sample refreshes every 30 seconds while the window is active.
 Storage is scanned only on request. One background operation runs at a time;
@@ -35,7 +39,18 @@ errors appear with details, and the interface stays responsive during scans.
 **Review cleanup** shows the exact eligible files with every checkbox initially
 empty. Select the files you want to remove, then confirm permanent removal in a
 separate dialog (default No). Files are revalidated by the engine before deletion.
-Other storage categories remain review-only. Scan sizes are estimates, and APFS
+Other cache categories remain review-only. In Disk explorer, a selected visible regular
+file in Downloads can instead be reviewed and moved to macOS Trash. No folders or
+application/library packages are moved. Trash is never emptied automatically.
+
+Folder analysis is metadata-only, with a 30-second / 200,000-entry budget and a
+Stop scan button. Stopping returns the inspected partial results. OS metadata calls
+can temporarily block cancellation, especially on network/cloud storage. Symlinks,
+other volumes, Trash, recovery staging and unreadable entries are explicitly excluded;
+partial coverage is never presented as a complete disk inventory. Largest files are
+limited to 100; the table shows up to 1,000 filtered immediate children.
+
+Scan sizes are estimates, and APFS
 space actually reclaimed is not claimed. History is loaded on request; reload it
 after cleanup or recovery. Successfully deleted files cannot be restored.
 
@@ -46,7 +61,7 @@ python -m pip install -e '.[desktop,build]'
 python packaging/build_macos.py
 ```
 
-This creates `dist/Pulse.app` and `dist/Pulse-0.2.0-macos-arm64.zip` on an Apple
+This creates `dist/Pulse.app` and `dist/Pulse-0.3.0-macos-arm64.zip` on an Apple
 Silicon Mac. Build on the target architecture; this is not a universal binary.
 The script generates the icon, bundles dependencies, adds runtime notices,
 checks the final local signature, and archives the app. It does not install into
@@ -71,6 +86,11 @@ ruff format --check .
 
 | Command | Behavior |
 | --- | --- |
+| `pulse analyze ~/Downloads` / `pulse analyze PATH --json` | Bounded, read-only folder analysis and largest files |
+| `pulse volumes` / `pulse volumes --json` | Individual mounted volumes and accessible capacity |
+| `pulse maintain` | List supported symptom-specific maintenance actions |
+| `pulse maintain quicklook-cache --dry-run` | Explain thumbnail rebuilding without changes |
+| `pulse maintain quicklook-cache` | Confirm (default NO), run a fixed macOS tool with a timeout and audit |
 | `pulse status` | OS version, architecture, cores, load, CPU, memory, disk, swap, battery and network totals |
 | `pulse processes --sort cpu --limit 10` | Accessible processes ranked by sampled CPU |
 | `pulse processes --sort memory` | Rank by resident memory |
@@ -82,13 +102,13 @@ ruff format --check .
 | `pulse clean --dry-run --json` | Structured plan and execution preview |
 | `pulse clean --category pip-http` (or `pip-http-legacy`) | Display plan, ask confirmation (default NO), execute and report |
 | `pulse history` / `pulse history --json` | Read private cleanup audit journals and potential recovery paths |
-| `pulse recover SOURCE --to ORIGINAL --dry-run` | Preview recovery of a preserved cache file |
+| `pulse recover SOURCE --to ORIGINAL --dry-run` | Preview recovery of a supported preserved file / trashed download |
 | `pulse recover SOURCE --to ORIGINAL` | Restore with confirmation, without overwriting existing data |
 | `pulse optimize` | Manual maintenance recommendations; no automatic changes |
 
 Use `--details` on `clean` to show every planned file and individual result.
-No command scans the whole filesystem. Storage scanning is explicit, with progress
-shown by the CLI. `status` and `health` never traverse cache directories.
+The known-cache inventory does not scan the whole filesystem. `analyze` inspects
+only the selected root and does not cross volumes; a budget always bounds traversal. `status` and `health` never traverse cache directories.
 
 ## What measurements mean
 
@@ -135,8 +155,18 @@ excluded from subsequent inventories.
 
 **Only recognized files in `~/Library/Caches/pip/http-v2` and the legacy
 `~/Library/Caches/pip/http` are executable cleanup candidates.** Browser caches/profiles, Trash, diagnostics, Xcode build data and
-other categories remain review-only or protected. Pulse never deletes Documents,
-Desktop, Downloads, media, projects, credentials, unknown app data or system files.
+other cache categories remain review-only or protected. Permanent cache cleanup never
+extends to Documents, Desktop, Downloads, media, projects, credentials or system files.
+The separate Downloads workflow moves only an explicitly reviewed regular file to
+native Trash, rechecking ownership, single-link identity, private parent permissions
+and a 15-minute preview age. A journal is mandatory before private staging and
+native movement. There is no fallback to permanent deletion. Failures preserve the
+staged file with a recovery path. Trash still occupies disk space. Pulse records
+the original path and native Trash destination, when the OS reports one; History
+can restore owned regular files from the current home Trash into Downloads, with
+confirmation and no overwrite. On other Trash locations, restore manually. Because
+files are staged for race checking, Finder Put Back can point to staging; use Pulse
+History or manually move the file back to its original location.
 A large directory never becomes SAFE just because of its size.
 
 A pip cache file qualifies only if its hash-based cache layout is recognized,
@@ -168,22 +198,34 @@ run, remaining operations stop and actual completed results are retained.
 Dry-run creates no journals or directories. History is local and never uploaded.
 Interrupted/malformed journals report errors while retaining prior recovery hints.
 Use `history` to review these hints; records are data, never executable plans.
-Recovery is explicit and restricted to matching pip cache staging paths. The
+Recovery is explicit and restricted to matching pip/Downloads staging paths or
+regular files in the current home Trash restored into Downloads. The
 source is revalidated and an exclusive hardlink prevents destination overwrite.
 Changed files, symlinks, different owners and conflicting destinations are refused.
-A successfully deleted file cannot be recovered; recovery only handles files
-preserved after errors. There is no automatic purge or history pruning. Descriptor
+A successfully deleted cache file cannot be recovered. Downloads in Trash remain
+recoverable until Trash is emptied outside Pulse. There is no automatic purge or history pruning. Descriptor
 checks reduce races; they do not promise protection against a hostile process
 running as the same user or an active writer with an already-open file handle.
 
-No sudo, automatic process killing, login-item changes, security-setting changes,
-RAM boosters or preference mutations are performed. Cleanup tests use temporary
-fixtures only. Real-data validation uses read-only commands and dry-run.
+Maintenance currently supports only the system thumbnail-cache reset
+(`/usr/bin/qlmanage -r cache`), when Finder previews are stale. It requires an
+explicit default-No confirmation and durable journal, uses no shell or administrator
+privileges, and stops waiting after 30 seconds. A timeout is reported as uncertain;
+check Finder before retrying. Caches regenerate, so previews may initially be slower.
+No blanket speedup, RAM boost, automatic process killing, login-item mutation or
+security-setting change is claimed. Close unneeded apps normally after reviewing
+measured processes. Cleanup/recovery tests use disposable fixtures only. The native
+Trash smoke check uses a uniquely named disposable file and restores/removes it.
+Actual user-data validation uses read-only commands and dry-run.
 
 ## Python APIs and architecture
 
 See [architecture](docs/architecture.md) for the stage boundaries.
 
+- `pulse.storage.analyzer.analyze_directory()` → bounded metadata inventory, coverage and largest files
+- `pulse.storage.trash.prepare_trash()` / `execute_trash()` → exact reviewed Downloads file, injected native adapter
+- `pulse.core.volumes.get_volumes()` → individual accessible mounted volumes
+- `pulse.optimization.actions.run_maintenance()` → confirmed narrow action and audit result
 - `pulse.core.system.get_system_stats()` → immutable system metrics
 - `pulse.core.processes.get_process_stats()` → processes and coverage
 - `pulse.core.network.network_activity(before, after)` → network rates

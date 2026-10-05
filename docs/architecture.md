@@ -5,7 +5,10 @@ The CLI and optional PySide6 desktop interface are replaceable presentation laye
 
 | Stage | Modules | Output / responsibility |
 | --- | --- | --- |
-| Collect | `core/system`, `core/processes`, `core/network` | Measured data, optional values and process coverage |
+| Collect | `core/system`, `core/processes`, `core/network`, `core/volumes` | Measured data, optional values and process coverage |
+| Explore | `storage/analyzer` | Bounded metadata-only traversal, cancellation, logical/allocated sizes and coverage |
+| Trash | `storage/trash`, `desktop/platform` | Exact Downloads file, journal, private staging, native adapter; no deletion fallback |
+| Maintain | `optimization/actions` | Fixed non-privileged macOS tool, explicit confirmation, timeout and audit |
 | Analyze | `health/engine` | Deterministic issues with severity, evidence and recommendations |
 | Scan | `cleanup/scanner` | Bounded, descriptor-based inventories; no writes |
 | Classify / plan | `cleanup/planner`, `cleanup/models` | Narrow allowlist, file identities, age, scope and completeness |
@@ -38,7 +41,8 @@ fundamental metric collection failures are surfaced to the caller.
 
 Known limits: snapshot thresholds do not establish sustained problems; battery
 condition and macOS Memory Pressure are not measured; cleanup execution currently
-supports pip HTTP caches (current and legacy) only; recovery is explicit rather than automatic; there is no
+permanently removes pip HTTP caches only; selected regular Downloads files can be moved to
+native Trash; recovery is explicit rather than automatic; there is no
 startup-item controller or claimed APFS reclaimed-space measurement.
 
 Cleanup journals are append-only per run and synced before mutations. They are
@@ -61,3 +65,26 @@ retaining category, root and file identities. Selection starts empty. A separate
 default-No confirmation precedes `confirmed=True, dry_run=False`. The executor
 remains the authority for scope, freshness and safety. History recovery hints
 are treated as data and passed through live recovery preparation/validation.
+
+## Explorer and maintenance boundaries
+
+The explorer reads only directory metadata via descriptors and never opens file
+contents. It shares a global inode set to attribute hard-linked content once.
+Allocated blocks are a measurement, not a claim about APFS exclusive allocation
+or reclaimed space. Traversal and retained largest-file results are bounded.
+The GUI supplies a cooperative cancellation event and receives queued progress
+signals; partial results remain usable. No scan triggers cleanup or maintenance.
+
+The engine's Trash adapter is injected as a callable and has no Qt import.
+`desktop/platform` implements it using Qt's native macOS Trash API. Selection
+previews are fresh identities, not authorization derived from analyzer results.
+Intent is synced before staging, identity is rechecked after atomic rename, and
+errors preserve a recoverable file. The adapter must move the file; absence of
+native support never triggers unlink. Successful native moves keep the original
+filename and report zero reclaimed bytes. History records contain original and
+Trash paths; recovery preparation revalidates supported paths independently.
+
+Maintenance uses an immutable internal catalog of complete argument tuples,
+without accepting user commands, a shell, sudo or arbitrary executables. Preview
+and cancellation have no effects. The journal is persisted before the tool runs;
+a timeout is an uncertain outcome, not reported success.
